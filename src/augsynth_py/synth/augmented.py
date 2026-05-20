@@ -22,6 +22,7 @@ Ben-Michael, E., Feller, A., & Rothstein, J. (2021). The Augmented Synthetic
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -230,3 +231,161 @@ def _fit_at_lambda(
         weights=weights,
         lambda_=float(lambda_),
     )
+
+
+def _build_auto_lambda_grid(
+    y_pre_treated: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Build the default lambda grid per design-doc D6.
+
+    Returns ``logspace(-4, 4, 50) * var(y_pre_treated)``. The variance
+    scaling defuses the same outcome-scale pathology that the
+    ``Synth._solve_simplex_qp`` normalisation step exists to handle: a grid
+    fixed in raw units misbehaves on series whose natural scale differs by
+    orders of magnitude.
+
+    Parameters
+    ----------
+    y_pre_treated
+        Length-``T0`` pre-period treated outcome vector. Demeaning by
+        ``fixedeff`` is irrelevant here -- the variance is invariant to an
+        additive shift.
+
+    Returns
+    -------
+    grid
+        Strictly increasing length-50 float64 array.
+
+    Raises
+    ------
+    ValueError
+        If ``y_pre_treated`` has zero variance (the auto-grid would collapse
+        to all zeros, killing the regularization).
+    """
+    sigma_sq = float(np.var(y_pre_treated, ddof=0))
+    if sigma_sq == 0.0:
+        raise ValueError(
+            "Cannot build auto lambda grid: y_pre_treated has zero variance. "
+            "Supply lambda_grid= explicitly or pre-process the input."
+        )
+    return np.logspace(-4, 4, 50, dtype=np.float64) * sigma_sq
+
+
+def _warn_if_lambda_at_boundary(
+    best_idx: int,
+    lambda_grid: NDArray[np.float64],
+) -> None:
+    """Emit a UserWarning when the CV-best lambda is at either grid extreme.
+
+    Standard diagnostic per design-doc D6: if the optimizer picks the
+    smallest or largest grid entry, the grid is almost certainly too narrow
+    -- the actual optimum lies outside it. Cheap to ignore, valuable when
+    needed.
+
+    Parameters
+    ----------
+    best_idx
+        Index of the chosen lambda in ``lambda_grid``.
+    lambda_grid
+        The grid that was searched. Used only for the warning message (no
+        validation of monotonicity here).
+    """
+    n = len(lambda_grid)
+    if best_idx == 0:
+        warnings.warn(
+            f"CV-selected lambda ({float(lambda_grid[0]):.3e}) is at the "
+            f"left boundary of the grid (length {n}). Refit with a wider "
+            f"lambda_grid covering smaller lambda values.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif best_idx == n - 1:
+        warnings.warn(
+            f"CV-selected lambda ({float(lambda_grid[-1]):.3e}) is at the "
+            f"right boundary of the grid (length {n}). Refit with a wider "
+            f"lambda_grid covering larger lambda values.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+
+def _loo_cv_lambda(
+    y_pre_donors: NDArray[np.float64],
+    y_pre_treated: NDArray[np.float64],
+    lambda_grid: NDArray[np.float64],
+) -> tuple[float, NDArray[np.float64]]:
+    """Leave-one-out CV over pre-treatment periods (BFR 2021 Section 3.2).
+
+    For each lambda in ``lambda_grid`` and each pre-period ``t``:
+
+    1. Drop row ``t`` from the donor and treated matrices.
+    2. Refit ``omega`` via ``Synth._solve_simplex_qp`` on the T0-1 remaining
+       rows.
+    3. Refit ``gamma`` via :func:`_ridge_augment` on the same rows at this
+       lambda.
+    4. Predict the held-out outcome: ``y_pre_donors[t] @ (omega + gamma)``.
+    5. Accumulate the squared prediction error.
+
+    Sum across ``t`` to get the CV loss for this lambda. Return the argmin
+    lambda and the full path.
+
+    Parameters
+    ----------
+    y_pre_donors
+        Pre-period donor matrix, shape ``(T0, J)``. Caller is responsible
+        for any unit fixed-effect demeaning, matching the
+        :func:`_ridge_augment` convention.
+    y_pre_treated
+        Pre-period treated vector, shape ``(T0,)``.
+    lambda_grid
+        Candidate ``lambda`` values to evaluate. Must be 1-D with
+        ``len >= 1``.
+
+    Returns
+    -------
+    best_lambda
+        Entry of ``lambda_grid`` that minimizes the CV loss.
+    cv_path
+        Shape ``(len(lambda_grid), 2)`` float64 array. Column 0 is
+        ``lambda_grid``; column 1 is the corresponding total LOO squared
+        error.
+
+    Raises
+    ------
+    ValueError
+        If ``lambda_grid`` is empty, or if ``T0 < 3`` (LOO needs at least
+        two periods of training data after dropping one).
+    """
+    t0 = y_pre_donors.shape[0]
+    n_grid = len(lambda_grid)
+    if n_grid == 0:
+        raise ValueError("lambda_grid must contain at least one candidate.")
+    if t0 < 3:
+        raise ValueError(
+            f"LOO needs at least T0=3 pre-periods (got {t0}); after dropping "
+            f"one fold, the leave-out fit still requires two periods."
+        )
+
+    cv_path = np.empty((n_grid, 2), dtype=np.float64)
+    cv_path[:, 0] = np.asarray(lambda_grid, dtype=np.float64)
+
+    # Precompute the (T0-1, J) leave-out matrices once -- saves T0 * n_grid
+    # rebuilds of the same arrays.
+    leave_one_out_donors = [np.delete(y_pre_donors, t, axis=0) for t in range(t0)]
+    leave_one_out_treated = [np.delete(y_pre_treated, t, axis=0) for t in range(t0)]
+
+    for lam_idx in range(n_grid):
+        lam = float(lambda_grid[lam_idx])
+        total_sq_err = 0.0
+        for t in range(t0):
+            y0_lo = leave_one_out_donors[t]
+            y1_lo = leave_one_out_treated[t]
+            omega_lo = Synth._solve_simplex_qp(y1_lo, y0_lo)
+            gamma_lo, _ = _ridge_augment(omega_lo, y0_lo, y1_lo, lambda_=lam)
+            pred = float(y_pre_donors[t] @ (omega_lo + gamma_lo))
+            total_sq_err += (float(y_pre_treated[t]) - pred) ** 2
+        cv_path[lam_idx, 1] = total_sq_err
+
+    best_idx = int(cv_path[:, 1].argmin())
+    best_lambda = float(cv_path[best_idx, 0])
+    return best_lambda, cv_path
