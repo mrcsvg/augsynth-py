@@ -380,8 +380,13 @@ def _loo_cv_lambda(
         for t in range(t0):
             y0_lo = leave_one_out_donors[t]
             y1_lo = leave_one_out_treated[t]
-            omega_lo = Synth._solve_simplex_qp(y1_lo, y0_lo)
-            gamma_lo, _ = _ridge_augment(omega_lo, y0_lo, y1_lo, lambda_=lam)
+            try:
+                omega_lo = Synth._solve_simplex_qp(y1_lo, y0_lo)
+                gamma_lo, _ = _ridge_augment(omega_lo, y0_lo, y1_lo, lambda_=lam)
+            except (RuntimeError, np.linalg.LinAlgError) as exc:
+                raise RuntimeError(
+                    f"LOO-CV fit failed at lambda={lam:g}, held-out t={t}: {exc}"
+                ) from exc
             pred = float(y_pre_donors[t] @ (omega_lo + gamma_lo))
             total_sq_err += (float(y_pre_treated[t]) - pred) ** 2
         cv_path[lam_idx, 1] = total_sq_err

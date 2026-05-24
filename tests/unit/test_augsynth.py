@@ -18,6 +18,7 @@ import polars as pl
 import pytest
 
 from augsynth_py import Synth
+from augsynth_py.exceptions import TreatedUnitNotFoundError
 from augsynth_py.synth.augmented import (
     AugSynth,
     _build_auto_lambda_grid,
@@ -711,3 +712,156 @@ def test_augsynth_warns_when_lambda_and_grid_both_supplied(
 
     assert est.lambda_ == 2.5
     assert est.lambda_cv_path_ is None
+
+
+def _augsynth_attribute_snapshot(est: AugSynth) -> dict[str, object]:
+    """Capture every public attribute of a fitted AugSynth in a comparable form."""
+    return {
+        "units_": list(est.units_),
+        "periods_": est.periods_.tolist(),
+        "actual_": est.actual_.tolist(),
+        "synthetic_": est.synthetic_.tolist(),
+        "synthetic_scm_": est.synthetic_scm_.tolist(),
+        "ridge_correction_": est.ridge_correction_.tolist(),
+        "gap_": est.gap_.tolist(),
+        "pre_mask_": est.pre_mask_.tolist(),
+        "weights_": dict(est.weights_),
+        "scm_weights_": dict(est.scm_weights_),
+        "augmentation_weights_": dict(est.augmentation_weights_),
+        "lambda_": est.lambda_,
+        "lambda_cv_path_": (None if est.lambda_cv_path_ is None else est.lambda_cv_path_.tolist()),
+        "att_": est.att_,
+        "att_pct_": est.att_pct_,
+        "rmspe_pre_": est.rmspe_pre_,
+        "treated_": est.treated_,
+        "treatment_time_": est.treatment_time_,
+    }
+
+
+def test_u7_determinism_fixed_lambda(rng: np.random.Generator) -> None:
+    """U7: same input twice -> identical fitted attributes (fixed-lambda path)."""
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    kwargs: dict[str, object] = {
+        "unit": "unit",
+        "time": "day",
+        "outcome": "y",
+        "treated": "t",
+        "treatment_time": 25,
+    }
+
+    a = AugSynth(lambda_=1.0).fit(panel, **kwargs)
+    b = AugSynth(lambda_=1.0).fit(panel, **kwargs)
+
+    assert _augsynth_attribute_snapshot(a) == _augsynth_attribute_snapshot(b)
+
+
+def test_u7_determinism_cv_path(rng: np.random.Generator) -> None:
+    """U7: same input twice -> identical fitted attributes (CV path)."""
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    grid = np.logspace(-2, 2, 5, dtype=np.float64)
+    kwargs: dict[str, object] = {
+        "unit": "unit",
+        "time": "day",
+        "outcome": "y",
+        "treated": "t",
+        "treatment_time": 25,
+    }
+
+    # Boundary warning is plausible on this random panel + short grid; suppress
+    # just the boundary message so we test determinism, not warning behavior.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message="CV-selected lambda",
+        )
+        a = AugSynth(lambda_grid=grid).fit(panel, **kwargs)
+        b = AugSynth(lambda_grid=grid).fit(panel, **kwargs)
+
+    assert _augsynth_attribute_snapshot(a) == _augsynth_attribute_snapshot(b)
+
+
+def test_u9_treated_unit_must_exist(rng: np.random.Generator) -> None:
+    """U9: treated value not in panel -> TreatedUnitNotFoundError (a ValueError)."""
+    panel = _long_panel(rng.normal(100.0, 10.0, (10, 3)), units=["a", "b", "c"])
+    with pytest.raises(TreatedUnitNotFoundError):
+        AugSynth(lambda_=1.0).fit(
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="missing",
+            treatment_time=5,
+        )
+
+
+def test_u9_treatment_time_boundaries(rng: np.random.Generator) -> None:
+    """U9: treatment_time at panel boundaries -> ValueError, message identifies the failure mode."""
+    panel = _long_panel(rng.normal(100.0, 10.0, (10, 3)), units=["a", "b", "c"])
+
+    # treatment_time before the first period -> zero pre-period rows.
+    with pytest.raises(ValueError, match="pre-treatment"):
+        AugSynth(lambda_=1.0).fit(
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="a",
+            treatment_time=0,
+        )
+
+    # treatment_time beyond the last period -> zero post-period rows.
+    with pytest.raises(ValueError, match="post-treatment"):
+        AugSynth(lambda_=1.0).fit(
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="a",
+            treatment_time=10,
+        )
+
+
+def test_u9_unbalanced_panel_is_rejected(rng: np.random.Generator) -> None:
+    """U9: missing (unit, time) pair -> ValueError mentioning 'unbalanced'."""
+    panel = _long_panel(rng.normal(100.0, 10.0, (10, 3)), units=["a", "b", "c"])
+    truncated = panel.filter(~((pl.col("unit") == "b") & (pl.col("day") == 4)))
+    with pytest.raises(ValueError, match="unbalanced"):
+        AugSynth(lambda_=1.0).fit(
+            truncated,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="a",
+            treatment_time=5,
+        )
+
+
+def test_loo_cv_wraps_solver_failure_with_fold_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a CV fold's QP fails, the RuntimeError must identify lambda and t.
+
+    Plan deviation: the M3 plan (Task E1) suggested an all-zero donor pool
+    would trigger ``Synth._solve_simplex_qp``'s "all-zero weights"
+    RuntimeError. It does not: with the ``sum(w) == 1`` simplex constraint,
+    the QP has a feasible solution for any donor matrix (e.g. ``w=[1/J,
+    ..., 1/J]``), and clipping never zeroes everything out. We instead
+    monkeypatch the solver to raise on the first fold -- this tests the
+    exact contract (per-fold wrap attaches ``(lambda, t)`` context) without
+    depending on a precarious DGP.
+    """
+    y_pre_donors = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64)
+    y_pre_treated = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    grid = np.array([0.5], dtype=np.float64)
+
+    def always_fail(y1: np.ndarray, y0: np.ndarray) -> np.ndarray:
+        raise RuntimeError("simulated solver failure")
+
+    monkeypatch.setattr(Synth, "_solve_simplex_qp", staticmethod(always_fail))
+
+    # First fold to be evaluated is t=0; the wrapper re-raises immediately.
+    with pytest.raises(RuntimeError, match=r"lambda=0\.5.*t=0"):
+        _loo_cv_lambda(y_pre_donors, y_pre_treated, grid)
