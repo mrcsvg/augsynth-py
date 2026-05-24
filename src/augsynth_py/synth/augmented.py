@@ -116,7 +116,9 @@ def _ridge_augment(
     y_pre_donors
         Pre-period donor outcome matrix :math:`Y_{0,\text{pre}}`, shape
         ``(T0, J)``. Caller is responsible for any unit fixed-effect
-        demeaning before invocation.
+        demeaning and period demeaning before invocation; see
+        :func:`_period_demean_pre` for the latter, which matches the R
+        ``augsynth`` reference at machine precision when applied.
     y_pre_treated
         Pre-period treated outcome vector :math:`Y_{1,\text{pre}}`, shape
         ``(T0,)``. Same demeaning convention as ``y_pre_donors``.
@@ -154,6 +156,50 @@ def _ridge_augment(
     gamma = np.linalg.solve(lhs, rhs).astype(np.float64, copy=False)
     pre_correction: NDArray[np.float64] = y_pre_donors @ gamma
     return gamma, pre_correction
+
+
+def _period_demean_pre(
+    y_pre_donors: NDArray[np.float64],
+    y_pre_treated: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""Subtract donor-mean-per-pre-period from donor and treated matrices.
+
+    Implements the period-demeaning step R ``augsynth`` applies inside
+    ``fit_ridgeaug_formatted`` (donor mean across donor units, computed
+    separately at each pre-period column, subtracted from every unit's value
+    at that column). Equivalent to absorbing time fixed effects in the ridge
+    augmentation step.
+
+    The simplex SCM solve is invariant to this subtraction (since :math:`\omega`
+    sums to 1, the period-mean shift cancels in the objective), so applying
+    period demeaning before solving for :math:`\omega` does not change
+    ``scm_weights_``. The ridge :math:`\gamma` solve **is** affected; this is
+    the step required for parity with the R reference at machine precision
+    (verified against ``augsynth(progfunc='Ridge', fixedeff=TRUE)`` on the
+    GeoLift fixture).
+
+    Parameters
+    ----------
+    y_pre_donors
+        Pre-period donor matrix shape ``(T0, J)``, already unit-fixedeff
+        demeaned by the caller. Not modified in place.
+    y_pre_treated
+        Pre-period treated vector shape ``(T0,)``, same demeaning
+        convention. Not modified in place.
+
+    Returns
+    -------
+    y_pre_donors_pdem
+        ``y_pre_donors - period_means[:, None]`` where ``period_means`` is
+        the donor mean at each pre-period row.
+    y_pre_treated_pdem
+        ``y_pre_treated - period_means``, using the same donor means.
+    """
+    period_means = y_pre_donors.mean(axis=1)
+    return (
+        y_pre_donors - period_means[:, None],
+        y_pre_treated - period_means,
+    )
 
 
 def _fit_at_lambda(
@@ -201,8 +247,16 @@ def _fit_at_lambda(
     y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
     y0_full = y_fit[:, donor_idx]
 
-    omega = Synth._solve_simplex_qp(y1_pre, y0_pre)
-    gamma, _ = _ridge_augment(omega, y0_pre, y1_pre, lambda_=lambda_)
+    # Period-demean donor and treated matrices before solving for omega and
+    # gamma. Matches R augsynth's ridge step at machine precision; see
+    # _period_demean_pre for the math motivation and the parity verification
+    # context. The unit-fixedeff-demeaned y0_full (without period demeaning)
+    # is the correct projection target for the final synthetic, since R's
+    # predict uses `treated_pre_mean + y_donors_unit_demeaned @ (omega+gamma)`
+    # and the period-mean shift cancels in this combination only at the solve.
+    y0_pre_pdem, y1_pre_pdem = _period_demean_pre(y0_pre, y1_pre)
+    omega = Synth._solve_simplex_qp(y1_pre_pdem, y0_pre_pdem)
+    gamma, _ = _ridge_augment(omega, y0_pre_pdem, y1_pre_pdem, lambda_=lambda_)
 
     full_correction = y0_full @ gamma  # ridge correction at every period
     treated_offset = offsets[treated_idx]
@@ -497,6 +551,13 @@ class AugSynth:
         y1_pre = y_fit[pre_mask, treated_idx]
         y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
 
+        # Period-demean before any CV or final solve. See _period_demean_pre.
+        # This is the change required for parity with R augsynth's ridge step;
+        # _loo_cv_lambda receives the period-demeaned matrices so each fold's
+        # held-out prediction lives in the same demeaned space (matches R's
+        # internal cv_lambda behavior).
+        y0_pre_pdem, y1_pre_pdem = _period_demean_pre(y0_pre, y1_pre)
+
         # Dispatch on (lambda_, lambda_grid) per D7.
         cv_path: NDArray[np.float64] | None
         if self._lambda_init is not None:
@@ -515,15 +576,15 @@ class AugSynth:
                 grid = _build_auto_lambda_grid(y1_pre)
             else:
                 grid = np.asarray(self._lambda_grid_init, dtype=np.float64)
-            effective_lambda, cv_path = _loo_cv_lambda(y0_pre, y1_pre, grid)
+            effective_lambda, cv_path = _loo_cv_lambda(y0_pre_pdem, y1_pre_pdem, grid)
             best_idx = int(cv_path[:, 1].argmin())
             _warn_if_lambda_at_boundary(best_idx, grid)
 
         # Final fit at the chosen lambda. We reuse the matrices we already
         # prepared rather than re-running _fit_at_lambda's panel prep.
         y0_full = y_fit[:, donor_idx]
-        omega = Synth._solve_simplex_qp(y1_pre, y0_pre)
-        gamma, _ = _ridge_augment(omega, y0_pre, y1_pre, lambda_=effective_lambda)
+        omega = Synth._solve_simplex_qp(y1_pre_pdem, y0_pre_pdem)
+        gamma, _ = _ridge_augment(omega, y0_pre_pdem, y1_pre_pdem, lambda_=effective_lambda)
 
         full_correction = y0_full @ gamma
         treated_offset = offsets[treated_idx]

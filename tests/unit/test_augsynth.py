@@ -213,18 +213,27 @@ def test_u4_large_lambda_reproduces_synth(rng: np.random.Generator) -> None:
     np.testing.assert_allclose(aug.synthetic_scm, synth.synthetic_, atol=1e-9)
     np.testing.assert_allclose(aug.synthetic, synth.synthetic_, atol=1e-6)
 
-    # Effective weights collapse onto the simplex SCM weights.
+    # Effective weights collapse onto the simplex SCM weights. The 1e-6
+    # tolerance reflects Clarabel solver precision: Synth's omega and
+    # AugSynth's omega solve identical QPs (simplex SCM is invariant to
+    # AugSynth's period-demeaning step) but the iterative solver lands on
+    # argmins that agree only to ~1e-7. The path-level collapse above is
+    # the load-bearing assertion; this is the corresponding weight-level
+    # statement at the solver's precision floor.
     for donor, w_synth in synth.weights_.items():
-        assert abs(aug.weights[donor] - w_synth) < 1e-9
+        assert abs(aug.weights[donor] - w_synth) < 1e-6
 
 
 def test_u5_small_lambda_drives_pre_gap_to_zero(rng: np.random.Generator) -> None:
-    """U5: at lambda_ -> 0, gamma -> OLS and (when T0 <= J) interpolates the residual.
+    """U5: at lambda_ -> 0, gamma -> OLS and (when J > T0) interpolates the residual.
 
-    The pre-period correction Y0_pre @ gamma then equals the projection of
-    the residual onto the column space of Y0_pre. When that span is all of
-    R^T0, the residual is its own projection and the pre-period gap is
-    machine-zero.
+    The pre-period correction ``Y0_pre_pdem @ gamma`` then equals the
+    residual itself in the period-demeaned space (where the ridge solve
+    lives, matching R augsynth). The raw pre-period gap is not exactly
+    zero -- the period-mean shift `period_means * (1 - (omega+gamma).sum())`
+    survives in the unit-demeaned-but-not-period-demeaned predict space --
+    so this test verifies the load-bearing invariant directly in the
+    demeaned space.
     """
     # T0 = 8, J = 12: more donors than pre-periods -> exact interpolation.
     t_total, t0, n_donors = 16, 8, 12
@@ -242,11 +251,32 @@ def test_u5_small_lambda_drives_pre_gap_to_zero(rng: np.random.Generator) -> Non
         lambda_=1e-10,
     )
 
-    pre_gap = result.gap[result.pre_mask]
-    assert pre_gap.shape == (t0,)
-    assert np.max(np.abs(pre_gap)) < 1e-5, (
-        f"Expected near-zero pre-period gap in interpolation regime; "
-        f"got max|gap_pre| = {np.max(np.abs(pre_gap)):.3e}."
+    # Reconstruct the period-demeaned pre-period matrices the solve saw.
+    from augsynth_py.synth._panel import (
+        apply_unit_fixedeff,
+        long_to_wide,
+        pre_period_mask,
+    )
+    from augsynth_py.synth.augmented import _period_demean_pre
+
+    y_matrix_wide, _units, periods, treated_idx = long_to_wide(
+        panel, unit="unit", time="day", outcome="y", treated="t"
+    )
+    pre_mask = pre_period_mask(periods, t0)
+    y_fit, _offsets = apply_unit_fixedeff(y_matrix_wide, pre_mask)
+    donor_idx = np.array([i for i in range(y_matrix_wide.shape[1]) if i != treated_idx])
+    y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
+    y1_pre = y_fit[pre_mask, treated_idx]
+    y0_pre_pdem, y1_pre_pdem = _period_demean_pre(y0_pre, y1_pre)
+
+    donor_names = [_units[i] for i in donor_idx]
+    effective = np.array([result.weights[d] for d in donor_names], dtype=np.float64)
+
+    pre_gap_pdem = y1_pre_pdem - y0_pre_pdem @ effective
+    assert pre_gap_pdem.shape == (t0,)
+    assert np.max(np.abs(pre_gap_pdem)) < 1e-5, (
+        f"Expected near-zero period-demeaned pre-gap in interpolation regime; "
+        f"got max|gap_pdem| = {np.max(np.abs(pre_gap_pdem)):.3e}."
     )
 
 
