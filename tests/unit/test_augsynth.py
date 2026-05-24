@@ -11,12 +11,15 @@ Test ids U1..U8 map to the inventory in
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import polars as pl
 import pytest
 
 from augsynth_py import Synth
 from augsynth_py.synth.augmented import (
+    AugSynth,
     _build_auto_lambda_grid,
     _fit_at_lambda,
     _loo_cv_lambda,
@@ -515,3 +518,196 @@ def test_u10_cv_picks_interior_lambda_better_than_extremes(
     # The interior loss is strictly less than either extreme.
     assert cv_path[best_idx, 1] < cv_path[0, 1]
     assert cv_path[best_idx, 1] < cv_path[-1, 1]
+
+
+def test_augsynth_fixed_lambda_matches_fit_at_lambda(rng: np.random.Generator) -> None:
+    """AugSynth(lambda_=L).fit() must produce the same arrays as _fit_at_lambda(L).
+
+    Sanity check that the new class wires the M1 primitive correctly. If
+    these match, all the M1-level property tests on _fit_at_lambda
+    transitively apply to AugSynth too.
+    """
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    common_kwargs: dict[str, object] = {
+        "unit": "unit",
+        "time": "day",
+        "outcome": "y",
+        "treated": "t",
+        "treatment_time": 25,
+    }
+
+    primitive = _fit_at_lambda(panel, lambda_=1.5, fixedeff=True, **common_kwargs)
+    est = AugSynth(fixedeff=True, lambda_=1.5).fit(panel, **common_kwargs)
+
+    # Path quantities are bit-for-bit equal (same arithmetic).
+    np.testing.assert_array_equal(est.actual_, primitive.actual)
+    np.testing.assert_array_equal(est.synthetic_, primitive.synthetic)
+    np.testing.assert_array_equal(est.synthetic_scm_, primitive.synthetic_scm)
+    np.testing.assert_array_equal(est.ridge_correction_, primitive.ridge_correction)
+    np.testing.assert_array_equal(est.gap_, primitive.gap)
+    np.testing.assert_array_equal(est.pre_mask_, primitive.pre_mask)
+    assert est.units_ == primitive.units
+    np.testing.assert_array_equal(est.periods_, primitive.periods)
+
+    # Weight dicts are equal entry-for-entry.
+    assert est.weights_ == primitive.weights
+    assert est.scm_weights_ == primitive.scm_weights
+    assert est.augmentation_weights_ == primitive.augmentation_weights
+
+    # AugSynth-specific attributes.
+    assert est.lambda_ == 1.5
+    assert est.lambda_cv_path_ is None  # fixed-lambda path
+    assert est.treated_ == "t"
+    assert est.treatment_time_ == 25
+
+
+def test_augsynth_att_pct_rmspe_attributes(rng: np.random.Generator) -> None:
+    """Synth-parallel scalar attributes are computed from the augmented gap.
+
+    Recomputes the values inline from the public arrays and asserts they
+    match. Catches any silent regression in the att_ / att_pct_ /
+    rmspe_pre_ arithmetic.
+    """
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    est = AugSynth(fixedeff=True, lambda_=1.0).fit(
+        panel,
+        unit="unit",
+        time="day",
+        outcome="y",
+        treated="t",
+        treatment_time=25,
+    )
+
+    pre = est.pre_mask_
+    pre_actual_mean = float(est.actual_[pre].mean())
+    pre_actual_scale = abs(pre_actual_mean) if pre_actual_mean != 0 else 1.0
+    expected_rmspe = float(np.sqrt(np.mean(est.gap_[pre] ** 2)) / pre_actual_scale)
+    expected_att = float(est.gap_[~pre].mean())
+    expected_att_pct = expected_att / pre_actual_scale * float(np.sign(pre_actual_mean or 1.0))
+
+    assert est.rmspe_pre_ == pytest.approx(expected_rmspe, abs=1e-12)
+    assert est.att_ == pytest.approx(expected_att, abs=1e-12)
+    assert est.att_pct_ == pytest.approx(expected_att_pct, abs=1e-12)
+
+
+def test_augsynth_cv_auto_grid_populates_lambda_cv_path(
+    rng: np.random.Generator,
+) -> None:
+    """lambda_=None, lambda_grid=None -> build auto-grid, run CV, expose path.
+
+    Uses the same U-shaped DGP as U10 so we know CV picks a non-trivial
+    lambda.
+    """
+    t0 = 10
+    donors = np.column_stack(
+        [
+            np.linspace(10.0, 20.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(8.0, 18.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(12.0, 22.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(15.0, 25.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(11.0, 21.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(13.0, 23.0, t0) + rng.normal(0.0, 1.0, t0),
+            np.full(t0, 30.0) + rng.normal(0.0, 1.0, t0),
+            np.linspace(0.0, 50.0, t0) + rng.normal(0.0, 2.0, t0),
+        ]
+    )
+    true_w = np.array([1.2, -0.3, 0.4, 0.2, 0.1, 0.2, 0.1, 0.1], dtype=np.float64)
+    treated = donors @ true_w + rng.normal(0.0, 1.5, t0)
+
+    # treatment_time=8 leaves 2 post-period periods (indices 8, 9). T0=8.
+    y_matrix = np.column_stack([treated, donors])
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(donors.shape[1]))])
+
+    # If CV picks the smallest or largest grid entry on this seed,
+    # _warn_if_lambda_at_boundary emits a UserWarning. pyproject's
+    # filterwarnings='error' would then fail the test for a reason
+    # unrelated to what we're asserting (path shape + auto-grid formula).
+    # Silence only that warning -- the conflict-warning path is tested in B3.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message="CV-selected lambda",
+        )
+        est = AugSynth().fit(  # all defaults: fixedeff=True, lambda_=None, lambda_grid=None
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="t",
+            treatment_time=8,
+        )
+
+    # CV path was taken.
+    assert est.lambda_cv_path_ is not None
+    assert est.lambda_cv_path_.shape == (50, 2)
+
+    # The chosen lambda equals the argmin of the path.
+    best_idx = int(est.lambda_cv_path_[:, 1].argmin())
+    assert est.lambda_ == pytest.approx(float(est.lambda_cv_path_[best_idx, 0]), abs=1e-12)
+
+    # The first column is the auto-grid: logspace(-4, 4, 50) * var(y_pre_treated).
+    # var() is shift-invariant, so this equals var of the *demeaned* y1_pre that
+    # _build_auto_lambda_grid actually sees inside fit() with fixedeff=True.
+    pre_treated = est.actual_[est.pre_mask_]
+    expected_grid = np.logspace(-4, 4, 50, dtype=np.float64) * float(np.var(pre_treated, ddof=0))
+    np.testing.assert_allclose(est.lambda_cv_path_[:, 0], expected_grid, rtol=1e-12)
+
+
+def test_augsynth_cv_with_user_grid(rng: np.random.Generator) -> None:
+    """lambda_=None, lambda_grid=<array> -> CV on user grid, no auto-grid."""
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    user_grid = np.array([0.1, 1.0, 10.0, 100.0], dtype=np.float64)
+
+    # Random panel + 4-point grid: CV best may land at a boundary, firing
+    # _warn_if_lambda_at_boundary. Test is about path shape + grid identity,
+    # not warning behavior, so suppress only that warning.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message="CV-selected lambda",
+        )
+        est = AugSynth(lambda_=None, lambda_grid=user_grid).fit(
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="t",
+            treatment_time=25,
+        )
+
+    assert est.lambda_cv_path_ is not None
+    assert est.lambda_cv_path_.shape == (4, 2)
+    # First column is exactly the user grid (not the auto-grid).
+    np.testing.assert_array_equal(est.lambda_cv_path_[:, 0], user_grid)
+    # Chosen lambda is one of the four candidates.
+    assert est.lambda_ in user_grid.tolist()
+
+
+def test_augsynth_warns_when_lambda_and_grid_both_supplied(
+    rng: np.random.Generator,
+) -> None:
+    """lambda_=<float> + lambda_grid=<array> -> warn that grid is ignored.
+
+    The float wins; CV is skipped; lambda_cv_path_ is None.
+    """
+    y_matrix = rng.normal(100.0, 10.0, (40, 7))
+    panel = _long_panel(y_matrix, units=["t", *(f"d{i}" for i in range(6))])
+    grid = np.array([0.1, 1.0, 10.0], dtype=np.float64)
+
+    with pytest.warns(UserWarning, match="lambda_grid was supplied"):
+        est = AugSynth(lambda_=2.5, lambda_grid=grid).fit(
+            panel,
+            unit="unit",
+            time="day",
+            outcome="y",
+            treated="t",
+            treatment_time=25,
+        )
+
+    assert est.lambda_ == 2.5
+    assert est.lambda_cv_path_ is None

@@ -389,3 +389,173 @@ def _loo_cv_lambda(
     best_idx = int(cv_path[:, 1].argmin())
     best_lambda = float(cv_path[best_idx, 0])
     return best_lambda, cv_path
+
+
+class AugSynth:
+    r"""Augmented synthetic control via ridge augmentation (BFR 2021).
+
+    Composes simplex-SCM weights :math:`\omega` (via
+    :class:`augsynth_py.synth.classical.Synth`) with a ridge augmentation
+    correction :math:`\gamma` fit on the pre-period SCM residual. The
+    effective weights are :math:`\omega + \gamma` (BFR 2021 Section 2.4
+    Lemma 1), real-valued and not constrained to the simplex.
+
+    Parameters
+    ----------
+    fixedeff
+        If True (default), subtract each unit's pre-period mean from its
+        outcome trajectory before fitting weights, then add back the treated
+        unit's pre-period mean when reporting the counterfactual. Same
+        semantics as ``Synth.fixedeff``.
+    lambda_
+        Ridge penalty. If a float, that value is used as-is and CV is
+        skipped (``lambda_cv_path_`` will be ``None`` after ``fit``). If
+        ``None`` (default), the value is chosen by leave-one-out CV over
+        the pre-treatment period; see ``lambda_grid``.
+    lambda_grid
+        Candidate values for CV. Ignored when ``lambda_`` is a float (a
+        ``UserWarning`` is emitted in that case). If ``None`` and
+        ``lambda_`` is also ``None``, an auto-grid is built per design-doc
+        D6: ``logspace(-4, 4, 50) * var(y_pre_treated)``.
+
+    Attributes
+    ----------
+    weights_ : dict[str, float]
+        Effective weights :math:`\omega + \gamma`. **May be negative and
+        need not sum to 1.** This is the primary weight attribute and
+        differs from ``Synth.weights_`` (which is on the simplex). Per
+        D5 / BFR 2021 Section 2.4 Lemma 1.
+    scm_weights_ : dict[str, float]
+        Inner SCM weights :math:`\omega` (simplex).
+    augmentation_weights_ : dict[str, float]
+        Ridge augmentation :math:`\gamma` (real-valued).
+    lambda_ : float
+        The penalty value actually used (CV-chosen or user-supplied).
+    lambda_cv_path_ : numpy.ndarray or None
+        Shape ``(n_grid, 2)`` array of ``(lambda, cv_loss)`` rows. ``None``
+        when ``lambda_`` was supplied as a float.
+    synthetic_scm_ : numpy.ndarray
+        SCM-only counterfactual (before ridge correction).
+    ridge_correction_ : numpy.ndarray
+        ``synthetic_ - synthetic_scm_``.
+    units_, periods_, actual_, synthetic_, gap_, att_, att_pct_,
+    rmspe_pre_, pre_mask_, treated_, treatment_time_
+        Mirror the corresponding ``Synth`` attributes; ``synthetic_``,
+        ``gap_``, ``att_``, ``att_pct_``, ``rmspe_pre_`` refer to the
+        augmented counterfactual rather than the pure SCM one.
+    """
+
+    def __init__(
+        self,
+        *,
+        fixedeff: bool = True,
+        lambda_: float | None = None,
+        lambda_grid: NDArray[np.float64] | None = None,
+    ) -> None:
+        self.fixedeff = fixedeff
+        self._lambda_init = lambda_
+        self._lambda_grid_init = lambda_grid
+
+    def fit(
+        self,
+        panel: pl.DataFrame,
+        *,
+        unit: str,
+        time: str,
+        outcome: str,
+        treated: Any,
+        treatment_time: Any,
+    ) -> AugSynth:
+        """Fit AugSynth on a long-format panel.
+
+        Parameters mirror :meth:`Synth.fit` exactly. See the class
+        docstring for the attribute surface populated by this call.
+
+        Returns
+        -------
+        self
+        """
+        # Panel prep -- mirrors _fit_at_lambda. Duplicated rather than
+        # extracted per design-doc D2 (extraction waits for estimator #3).
+        y_matrix, units, periods, treated_idx = long_to_wide(
+            panel, unit=unit, time=time, outcome=outcome, treated=treated
+        )
+        pre_mask = pre_period_mask(periods, treatment_time)
+
+        if self.fixedeff:
+            y_fit, offsets = apply_unit_fixedeff(y_matrix, pre_mask)
+        else:
+            y_fit = y_matrix
+            offsets = np.zeros(y_matrix.shape[1], dtype=np.float64)
+
+        donor_idx = np.array([i for i in range(y_matrix.shape[1]) if i != treated_idx])
+        y1_pre = y_fit[pre_mask, treated_idx]
+        y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
+
+        # Dispatch on (lambda_, lambda_grid) per D7.
+        cv_path: NDArray[np.float64] | None
+        if self._lambda_init is not None:
+            if self._lambda_grid_init is not None:
+                warnings.warn(
+                    f"lambda_grid was supplied alongside an explicit "
+                    f"lambda_={float(self._lambda_init):g}; the grid is ignored. "
+                    f"Pass lambda_=None to use lambda_grid for CV.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            effective_lambda = float(self._lambda_init)
+            cv_path = None
+        else:
+            if self._lambda_grid_init is None:
+                grid = _build_auto_lambda_grid(y1_pre)
+            else:
+                grid = np.asarray(self._lambda_grid_init, dtype=np.float64)
+            effective_lambda, cv_path = _loo_cv_lambda(y0_pre, y1_pre, grid)
+            best_idx = int(cv_path[:, 1].argmin())
+            _warn_if_lambda_at_boundary(best_idx, grid)
+
+        # Final fit at the chosen lambda. We reuse the matrices we already
+        # prepared rather than re-running _fit_at_lambda's panel prep.
+        y0_full = y_fit[:, donor_idx]
+        omega = Synth._solve_simplex_qp(y1_pre, y0_pre)
+        gamma, _ = _ridge_augment(omega, y0_pre, y1_pre, lambda_=effective_lambda)
+
+        full_correction = y0_full @ gamma
+        treated_offset = offsets[treated_idx]
+        synthetic_scm = y0_full @ omega + treated_offset
+        synthetic = synthetic_scm + full_correction
+        actual = y_matrix[:, treated_idx]
+        gap = actual - synthetic
+
+        donor_names = [units[i] for i in donor_idx]
+        scm_weights = {name: float(w) for name, w in zip(donor_names, omega, strict=True)}
+        augmentation_weights = {name: float(w) for name, w in zip(donor_names, gamma, strict=True)}
+        effective = omega + gamma
+        weights = {name: float(w) for name, w in zip(donor_names, effective, strict=True)}
+
+        pre_actual_mean = float(actual[pre_mask].mean())
+        pre_actual_scale = abs(pre_actual_mean) if pre_actual_mean != 0 else 1.0
+        rmspe_pre = float(np.sqrt(np.mean(gap[pre_mask] ** 2)) / pre_actual_scale)
+        att = float(gap[~pre_mask].mean())
+        att_pct = att / pre_actual_scale * float(np.sign(pre_actual_mean or 1.0))
+
+        self.units_: list[str] = units
+        self.periods_: NDArray[Any] = periods
+        self.actual_: NDArray[np.float64] = actual
+        self.synthetic_: NDArray[np.float64] = synthetic
+        self.synthetic_scm_: NDArray[np.float64] = synthetic_scm
+        self.ridge_correction_: NDArray[np.float64] = full_correction
+        self.gap_: NDArray[np.float64] = gap
+        self.pre_mask_: NDArray[np.bool_] = pre_mask
+        self.weights_: dict[str, float] = weights
+        self.scm_weights_: dict[str, float] = scm_weights
+        self.augmentation_weights_: dict[str, float] = augmentation_weights
+        self.lambda_: float = float(effective_lambda)
+        self.lambda_cv_path_: NDArray[np.float64] | None = cv_path
+        self.att_: float = att
+        self.att_pct_: float = att_pct
+        self.rmspe_pre_: float = rmspe_pre
+        self.treated_: Any = treated
+        self.treatment_time_: Any = treatment_time
+
+        return self
