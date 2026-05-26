@@ -86,9 +86,14 @@ Every public estimator must have at least one test in
 
 PRs that add a new estimator without a parity test should be rejected.
 
-## Out of scope for the v0.1 MVP
+## Out of scope for the v0.2 MVP
 
-- Generalized Synthetic Control (Xu 2017) — defer to v0.2.
+- AugSynth with auxiliary covariates / predictors $X_i$ — deferred per
+  [R-1.1](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-11--augsynth-with-auxiliary-covariates--predictors-x_i).
+- Matrix-completion augmentation (Athey et al. 2021) — deferred per
+  [R-1.2](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-12--matrix-completion-augmentation-athey-et-al-2021).
+- BFR 2021 §4 GSC augmentation (Xu 2017 / gsynth) — deferred per
+  [R-1.3](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-13--bfr-2021-4-gsc-augmentation-xu-2017--gsynth).
 - Multi-cell experiments — defer to v0.3.
 - Bayesian variants — out of scope, that's CausalPy's territory.
 - GPU acceleration — not needed.

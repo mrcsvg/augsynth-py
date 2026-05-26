@@ -89,21 +89,98 @@ it, Clarabel falsely reports infeasibility on data with natural scales above
 Augmented Synthetic Control Method. *Journal of the American Statistical
 Association*, 116(536), 1789–1803.
 
-**Code location:** `src/augsynth_py/synth/augmented.py` *(not yet implemented)*
+**Code location:** [`src/augsynth_py/synth/augmented.py`](../src/augsynth_py/synth/augmented.py)
+— class `AugSynth`, plus the private helpers `_ridge_augment`,
+`_period_demean_pre`, `_fit_at_lambda`, `_loo_cv_lambda`, and
+`_build_auto_lambda_grid`.
 
-**Estimator.** ASCM corrects the bias of classical SC when pre-period fit is
-imperfect. The augmented estimator is
+**Estimator.** AugSynth corrects the bias of classical synthetic control when
+the pre-period fit is imperfect, by composing the simplex SCM weights
+$\omega \in \Delta^J$ with a ridge augmentation $\gamma \in \mathbb{R}^J$
+fit on the SCM residual. The effective AugSynth weights are
+$\omega + \gamma$ (BFR 2021 §2.4 Lemma 1). They are real-valued and need
+not lie on the simplex.
+
+Given the pre-period donor matrix $Y_{0,\text{pre}} \in \mathbb{R}^{T_0 \times J}$,
+the pre-period treated vector $Y_{1,\text{pre}} \in \mathbb{R}^{T_0}$, and
+the simplex SCM solution $\omega$, the ridge augmentation solves
 
 $$
-\hat\tau_{\text{ASCM}} = \hat\tau_{\text{SC}}
-                     - \big(\hat m(X_1) - \hat m(X_0) w^*\big)
+\gamma \;=\; \arg\min_{\gamma \in \mathbb{R}^J} \big\| Y_{1,\text{pre}} \;-\; Y_{0,\text{pre}} (\omega + \gamma) \big\|_2^2 \;+\; \lambda \|\gamma\|_2^2
 $$
 
-where $\hat m$ is an outcome model fit on the donor pool. The default choice
-in Ben-Michael et al. is ridge regression; the bias correction term then has
-a closed form.
+with closed form
 
-**Implementation notes.** *(to be filled in when the estimator lands)*
+$$
+\gamma \;=\; \big(Y_{0,\text{pre}}^\top Y_{0,\text{pre}} + \lambda I_J\big)^{-1} Y_{0,\text{pre}}^\top \big(Y_{1,\text{pre}} - Y_{0,\text{pre}} \omega\big).
+$$
+
+The counterfactual at every period $t$ is then
+
+$$
+\hat Y_{1,t}(0) \;=\; Y_{0,t}^\top (\omega + \gamma) \;+\; \mu_1
+$$
+
+where $\mu_1$ is the treated unit's pre-period mean (added back when
+`fixedeff=True`). The bias decomposition `weights_ = scm_weights_ +
+augmentation_weights_` is the BFR Lemma 1 surface and is asserted in
+unit test U3 at `atol=1e-10`.
+
+**Implementation notes.**
+
+`AugSynth` composes the existing classical `Synth` estimator for $\omega$
+(via `Synth._solve_simplex_qp`) with the ridge step in `_ridge_augment`,
+then projects across the full period. This composition is the per-design-doc
+D2 architectural choice: separate class, not inheritance, since the fitted-
+object surface differs (`AugSynth` adds `lambda_`, `lambda_cv_path_`,
+`synthetic_scm_`, `ridge_correction_`, `scm_weights_`,
+`augmentation_weights_`).
+
+Before the SCM and ridge solves, both donor and treated pre-period matrices
+are **period-demeaned** by `_period_demean_pre`: at each pre-period column,
+the donor-mean across donors is subtracted from every unit's value. This
+absorbs time fixed effects in the ridge step. The simplex SCM is invariant
+to this subtraction (since $\omega$ sums to 1, the period-mean cancels in
+the objective); the ridge $\gamma$ is not. This is the M3.5 fix documented
+in [`docs/clean-room-audit-2026-05-26-augsynth.md`](clean-room-audit-2026-05-26-augsynth.md)
+§4.1 (deviation D-1). Without it, the augmented path diverges from R
+`augsynth(progfunc='Ridge')` by orders of magnitude exceeding the D8
+tolerance; with it, Test A passes strict on all three documented λ regimes.
+
+The ridge is stated above as a $J \times J$ primal system. R `augsynth`
+uses the equivalent $T_0 \times T_0$ dual; the two formulations produce
+identical $\gamma$ under the Woodbury identity
+$(X^\top X + \lambda I_p)^{-1} X^\top = X^\top (X X^\top + \lambda I_n)^{-1}$.
+The primal is preferred here because the $J \times J$ matrix is the natural
+home of the donor-weight interpretation that BFR §2.4 Lemma 1 calls out.
+
+**Cross-validation.** Per BFR 2021 §3.2, $\lambda$ is selected by leave-one-
+out CV over pre-treatment periods. For each candidate $\lambda$ and each
+held-out pre-period $t$, `_loo_cv_lambda` refits $\omega$ and $\gamma$ on
+the remaining $T_0 - 1$ rows and records the squared prediction error at
+$t$. The argmin over the grid is returned. The default grid (per design-doc
+D6) is
+
+$$
+\Lambda \;=\; \mathrm{logspace}(-4, 4, 50) \cdot \mathrm{Var}(Y_{1,\text{pre}}),
+$$
+
+constructed by `_build_auto_lambda_grid`. The variance scaling mirrors the
+numerical-scaling rationale used in classical `Synth` (see §1 above):
+without it, a grid fixed in raw units misbehaves on series whose natural
+scale differs by orders of magnitude. A `UserWarning` fires when CV selects
+a grid endpoint, indicating the auto-grid was too narrow.
+
+**Validation.** Three layers:
+
+1. **Unit tests** ([`tests/unit/test_augsynth.py`](../tests/unit/test_augsynth.py)) cover the U1–U10 inventory from the design doc: closed-form `_ridge_augment` (U1), effective-weights-can-be-negative (U2), Lemma 1 decomposition (U3), large-λ limit collapses onto `Synth` (U4), small-λ OLS limit in the period-demeaned space (U5), boundary warning (U6), determinism (U7), perfect-donor regime (U8), input validation (U9), and CV interior-selection (U10). All green.
+2. **Parity tests** ([`tests/validation_against_r/test_augsynth.py`](../tests/validation_against_r/test_augsynth.py)) compare `AugSynth` to `augsynth(progfunc='Ridge', scm=TRUE, fixedeff=TRUE)` on `GeoLift_PreTest`. Test A pins $\lambda$ at three regimes ($\{0.1, 1.0, 10.0\} \times \mathrm{Var}(Y_{1,\text{pre}})$) and asserts strict path agreement plus per-donor effective-weight agreement; Test B pins an 11-entry log-spaced grid and asserts the CV-chosen $\lambda$ matches R within one grid cell. On `GeoLift_PreTest`, both implementations select the same cell.
+3. **Replication notebook.** Optional M6 milestone; not required for the v0.2 audit.
+
+See [`docs/clean-room-audit-2026-05-26-augsynth.md`](clean-room-audit-2026-05-26-augsynth.md)
+for the full deviation ledger (D-1 period demeaning; D-2 R-side CV argument
+convention; D-3 `ridge_correction_` tolerance refinement; U4 / U5 unit-test
+rewrites) and the empirical max-delta table.
 
 ---
 

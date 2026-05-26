@@ -142,7 +142,8 @@ DI 2016 catalogs several methods beyond eq (5.6):
 | Elastic-net regularized form ("the proposed method" of DI 2016) | §4.4 (OBJECTIVE FUNCTION) | Not implemented. |
 | DI 2016 cross-validation procedure for $(\alpha, \lambda)$ | §4.4 | Not applicable until the regularized form lands. |
 | Best subset selection | §5.4, eq (5.7) | Not implemented. |
-| Ridge augmentation (AugSynth — Ben-Michael, Feller & Rothstein 2021) | Not in DI 2016; referenced separately | **v0.2 milestone.** Explicitly out of scope for `Synth`. |
+| Ridge augmentation (AugSynth — Ben-Michael, Feller & Rothstein 2021) | Not in DI 2016; referenced separately | **Implemented in v0.2** (see [`clean-room-audit-2026-05-26-augsynth.md`](clean-room-audit-2026-05-26-augsynth.md)). Explicitly out of scope for `Synth`. |
+| AugSynth with auxiliary covariates $X_i$ | Not in DI 2016 (BFR 2021 §2 references; not implemented here) | Deferred to v0.4+ per [R-1.1](plans/2026-05-16-augsynth-v0.2-design.md#r-11--augsynth-with-auxiliary-covariates--predictors-x_i). |
 
 ---
 

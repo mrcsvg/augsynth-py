@@ -6,6 +6,7 @@ following the scikit-learn estimator contract loosely (no fit/transform split,
 since synthetic control fits and predicts jointly).
 """
 
+from augsynth_py.synth.augmented import AugSynth
 from augsynth_py.synth.classical import Synth
 
-__all__ = ["Synth"]
+__all__ = ["AugSynth", "Synth"]
