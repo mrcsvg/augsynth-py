@@ -246,10 +246,12 @@ class FitResult:
     att_avg: float  # mean gap in post period (absolute units)
     att_avg_pct: float  # att_avg / mean(actual_pre)
     rmspe_pre: float  # pre-period RMSPE / mean(actual_pre)
-    att_by_period: np.ndarray | None  # ATT trajectory (post period only) if available
-    att_periods: np.ndarray | None  # corresponding period indices for att_by_period
-    ci_lower: np.ndarray | None  # lower CI bound (post period) if available
-    ci_upper: np.ndarray | None  # upper CI bound (post period) if available
+    att_by_period: np.ndarray | None = None  # ATT trajectory (post period only) if available
+    att_periods: np.ndarray | None = None  # corresponding period indices for att_by_period
+    ci_lower: np.ndarray | None = None  # lower CI bound (post period) if available
+    ci_upper: np.ndarray | None = None  # upper CI bound (post period) if available
+    chosen_lambda: float | None = None  # ridge λ chosen by CV (AugSynth only)
+    lambda_path: np.ndarray | None = None  # shape (n_grid, 2): [lambda, cv_loss]
 
 
 def _fit_via_augsynth(
@@ -261,9 +263,12 @@ def _fit_via_augsynth(
     method_label: str,
     fixedeff: bool = True,
     inference: str | None = None,
+    unit: str = "city",
+    time: str = "day",
+    outcome: str = "sales",
 ) -> FitResult:
     r = _r()
-    pdf = panel.select("day", "city", "sales", "treat").to_pandas()
+    pdf = panel.select(time, unit, outcome, "treat").to_pandas()
 
     with (r.ro.default_converter + r.pandas2ri.converter).context():
         rdf = r.ro.conversion.get_conversion().py2rpy(pdf)
@@ -272,7 +277,7 @@ def _fit_via_augsynth(
     extra = f", inference='{inference}'" if inference else ""
     fe_arg = "TRUE" if fixedeff else "FALSE"
     r.ro.r(
-        "res <- augsynth::augsynth(sales ~ treat, unit = city, time = day, "
+        f"res <- augsynth::augsynth({outcome} ~ treat, unit = {unit}, time = {time}, "
         f"data = panel_r, progfunc = '{progfunc}', scm = TRUE, fixedeff = {fe_arg}{extra})"
     )
 
@@ -284,8 +289,8 @@ def _fit_via_augsynth(
     synthetic = np.asarray(r.ro.r("predict(res, att = FALSE)"), dtype=float)
 
     actual = (
-        panel.filter(pl.col("city") == treated_city)
-        .sort("day")["sales"]
+        panel.filter(pl.col(unit) == treated_city)
+        .sort(time)[outcome]
         .to_numpy()
         .astype(float)
     )
@@ -315,6 +320,21 @@ def _fit_via_augsynth(
     except Exception:
         pass
 
+    chosen_lambda: float | None = None
+    lambda_path: np.ndarray | None = None
+    if progfunc.lower() == "ridge":
+        try:
+            chosen_lambda = float(np.asarray(r.ro.r("res$lambda"), dtype=float).ravel()[0])
+        except Exception:
+            chosen_lambda = None
+        try:
+            lambdas = np.asarray(r.ro.r("res$lambdas"), dtype=float).ravel()
+            errors = np.asarray(r.ro.r("res$lambda_errors"), dtype=float).ravel()
+            if lambdas.size and errors.size == lambdas.size:
+                lambda_path = np.column_stack([lambdas, errors])
+        except Exception:
+            lambda_path = None
+
     return FitResult(
         method=method_label,
         treated_city=treated_city,
@@ -330,6 +350,8 @@ def _fit_via_augsynth(
         att_periods=att_periods,
         ci_lower=ci_lower,
         ci_upper=ci_upper,
+        chosen_lambda=chosen_lambda,
+        lambda_path=lambda_path,
     )
 
 
@@ -339,6 +361,9 @@ def fit_scm_r(
     treatment_day: int = 60,
     *,
     fixedeff: bool = True,
+    unit: str = "city",
+    time: str = "day",
+    outcome: str = "sales",
 ) -> FitResult:
     """Classical synthetic control via `augsynth(progfunc='None', scm=TRUE)`.
 
@@ -353,6 +378,9 @@ def fit_scm_r(
         progfunc="None",
         method_label="SCM",
         fixedeff=fixedeff,
+        unit=unit,
+        time=time,
+        outcome=outcome,
     )
 
 
@@ -363,6 +391,9 @@ def fit_augsynth_r(
     *,
     fixedeff: bool = True,
     conformal: bool = False,
+    unit: str = "city",
+    time: str = "day",
+    outcome: str = "sales",
 ) -> FitResult:
     """Ridge-augmented SCM via `augsynth(progfunc='Ridge', scm=TRUE)`.
 
@@ -378,6 +409,9 @@ def fit_augsynth_r(
         method_label="AugSynth",
         fixedeff=fixedeff,
         inference="conformal" if conformal else None,
+        unit=unit,
+        time=time,
+        outcome=outcome,
     )
 
 

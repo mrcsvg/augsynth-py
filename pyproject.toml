@@ -101,6 +101,11 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D"]  # don't require docstrings in tests
+# Notebook builders emit markdown strings with LaTeX-adjacent typography (γ, ×, λ,
+# −, etc.). These are intentional in the rendered narrative and shouldn't be
+# flagged as ambiguous-Unicode. Docstring-style rules also don't apply to
+# script-flavoured helpers.
+"notebooks/**/*.py" = ["RUF001", "RUF002", "RUF003", "D"]
 
 # ---------------------------------------------------------------------------
 # Mypy: strict type checking on src/, lenient on tests/
