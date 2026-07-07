@@ -80,3 +80,6 @@ notebooks/*.ipynb
 .claudeignore
 CLAUDE.local.md
 docs/plans/
+
+# Paper working material (local only — not part of the package)
+paper/
