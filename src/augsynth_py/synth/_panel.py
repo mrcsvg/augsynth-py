@@ -8,6 +8,7 @@ augmented variant.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -37,8 +38,9 @@ def long_to_wide(
     and they are removed from the donor pool. Per R ``augsynth`` semantics for a
     block treatment with a single intervention time, this pooled-mean series is
     the fit target. Collapsing here (before any fixed-effect demeaning) is
-    identical to demeaning each treated unit and then averaging, because both
-    operations are linear averages and therefore commute.
+    identical to demeaning each treated unit and then averaging: pre-period
+    demeaning is a linear map applied identically to each column, so it
+    distributes over the cross-column average.
 
     Parameters
     ----------
@@ -60,8 +62,9 @@ def long_to_wide(
     units
         Length-``N`` list of unit names in the column order of ``Y``. The
         treated column is always at position ``treated_idx``; for a sequence
-        ``treated``, ``units[0]`` is the sorted comma-joined label of the
-        treated group.
+        ``treated``, ``units[0]`` is the comma-joined label of the treated
+        group, sorted by string representation (so ``[2, 10]`` labels as
+        ``"10,2"``).
     periods
         Length-``T`` 1-D array of the ``time`` values in row order.
     treated_idx
@@ -84,11 +87,14 @@ def long_to_wide(
         )
 
     # Normalize `treated` to a list of one or more unit values. A bare str/bytes
-    # is a scalar, not a sequence of characters.
-    if isinstance(treated, (str, bytes)) or not isinstance(treated, (list, tuple, set)):
+    # is a scalar, not a sequence of characters; any other iterable (list, tuple,
+    # set, np.ndarray, pl.Series, ...) is a sequence of unit values.
+    if isinstance(treated, (str, bytes)):
         treated_list = [treated]
-    else:
+    elif isinstance(treated, Iterable):
         treated_list = sorted(set(treated), key=str)
+    else:
+        treated_list = [treated]
     if not treated_list:
         raise ValueError("`treated` must name at least one unit.")
 

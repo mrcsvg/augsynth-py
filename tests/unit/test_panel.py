@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from augsynth_py.exceptions import TreatedUnitNotFoundError
+from augsynth_py.exceptions import EmptyDonorPoolError, TreatedUnitNotFoundError
 from augsynth_py.synth._panel import long_to_wide
 
 
@@ -78,6 +78,23 @@ def test_long_to_wide_duplicate_treated_entries_deduplicated() -> None:
     np.testing.assert_allclose(y[:, 0], [(1 + 4) / 2, (2 + 5) / 2, (3 + 6) / 2])
 
 
+def test_long_to_wide_ndarray_treated_collapses_like_list() -> None:
+    """Non-list iterables (e.g. np.ndarray) are treated as sequences too."""
+    panel = _toy_panel()
+    y, units, _, treated_idx = long_to_wide(
+        panel, unit="unit", time="time", outcome="Y", treated=np.array(["a", "d"])
+    )
+    assert treated_idx == 0
+    assert units[0] == "a,d"
+    np.testing.assert_allclose(y[:, 0], [(1 + 4) / 2, (2 + 5) / 2, (3 + 6) / 2])
+
+
+def test_long_to_wide_empty_treated_list_raises() -> None:
+    panel = _toy_panel()
+    with pytest.raises(ValueError, match="at least one unit"):
+        long_to_wide(panel, unit="unit", time="time", outcome="Y", treated=[])
+
+
 def test_long_to_wide_unknown_treated_in_list_raises() -> None:
     panel = _toy_panel()
     with pytest.raises(TreatedUnitNotFoundError):
@@ -85,8 +102,6 @@ def test_long_to_wide_unknown_treated_in_list_raises() -> None:
 
 
 def test_long_to_wide_all_units_treated_raises_empty_donor() -> None:
-    from augsynth_py.exceptions import EmptyDonorPoolError
-
     panel = _toy_panel()
     with pytest.raises(EmptyDonorPoolError):
         long_to_wide(panel, unit="unit", time="time", outcome="Y", treated=["a", "b", "c", "d"])
