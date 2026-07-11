@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-from augsynth_py import Synth
+from augsynth_py import AugSynth, Synth
 from augsynth_py.synth._panel import imbalance
 
 
@@ -67,3 +67,19 @@ def test_synth_exposes_imbalance_attributes() -> None:
     assert est.l2_imbalance_ >= 0.0
     # A fitted SCM should not be worse than uniform weights.
     assert est.scaled_l2_imbalance_ <= 1.0 + 1e-9
+
+
+def test_augsynth_exposes_imbalance_attributes() -> None:
+    rng = np.random.default_rng(4)
+    names = [f"u{i}" for i in range(5)]
+    rows = []
+    for j, name in enumerate(names):
+        for t in range(12):
+            rows.append({"unit": name, "time": t, "Y": float(rng.normal() + j)})
+    panel = pl.DataFrame(rows)
+    est = AugSynth(fixedeff=True, lambda_=1.0).fit(
+        panel, unit="unit", time="time", outcome="Y", treated="u0", treatment_time=8
+    )
+    assert isinstance(est.l2_imbalance_, float)
+    assert isinstance(est.scaled_l2_imbalance_, float)
+    assert est.l2_imbalance_ >= 0.0

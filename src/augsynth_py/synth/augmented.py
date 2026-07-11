@@ -32,6 +32,7 @@ from numpy.typing import NDArray
 
 from augsynth_py.synth._panel import (
     apply_unit_fixedeff,
+    imbalance,
     long_to_wide,
     pre_period_mask,
 )
@@ -502,6 +503,18 @@ class AugSynth:
         SCM-only counterfactual (before ridge correction).
     ridge_correction_ : numpy.ndarray
         ``synthetic_ - synthetic_scm_``.
+    l2_imbalance_ : float
+        Pre-period L2 imbalance, computed in the period-demeaned pre-period
+        fit space (where :math:`\omega` and :math:`\gamma` are solved) with
+        the effective weights :math:`\omega + \gamma`, so it reflects the
+        augmented fit rather than the pure SCM one. See
+        :func:`augsynth_py.synth._panel.imbalance`.
+    scaled_l2_imbalance_ : float
+        ``l2_imbalance_`` divided by the L2 imbalance of uniform ``1/J``
+        donor weights in the same space. Same IEEE zero-denominator
+        convention as ``Synth`` (``inf`` when the fitted imbalance is
+        positive, ``nan`` for 0/0); see
+        :func:`augsynth_py.synth._panel.imbalance`.
     units_, periods_, actual_, synthetic_, gap_, att_, att_pct_,
     rmspe_pre_, pre_mask_, treated_, treatment_time_
         Mirror the corresponding ``Synth`` attributes; ``synthetic_``,
@@ -616,6 +629,13 @@ class AugSynth:
         effective = omega + gamma
         weights = {name: float(w) for name, w in zip(donor_names, effective, strict=True)}
 
+        # Imbalance is computed in the period-demeaned pre-period fit space
+        # with the effective weights (omega + gamma), so it reflects the
+        # augmented fit. The space choice is provisional until the Task 6
+        # parity test pins it against R; if R disagrees, change which
+        # matrices are passed here — never the imbalance helper itself.
+        l2_imb, scaled_l2_imb = imbalance(y1_pre_pdem, y0_pre_pdem, effective)
+
         pre_actual_mean = float(actual[pre_mask].mean())
         pre_actual_scale = abs(pre_actual_mean) if pre_actual_mean != 0 else 1.0
         rmspe_pre = float(np.sqrt(np.mean(gap[pre_mask] ** 2)) / pre_actual_scale)
@@ -635,6 +655,8 @@ class AugSynth:
         self.augmentation_weights_: dict[str, float] = augmentation_weights
         self.lambda_: float = float(effective_lambda)
         self.lambda_cv_path_: NDArray[np.float64] | None = cv_path
+        self.l2_imbalance_: float = l2_imb
+        self.scaled_l2_imbalance_: float = scaled_l2_imb
         self.att_: float = att
         self.att_pct_: float = att_pct
         self.rmspe_pre_: float = rmspe_pre
