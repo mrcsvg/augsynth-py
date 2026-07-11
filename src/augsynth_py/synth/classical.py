@@ -60,7 +60,10 @@ class Synth:
     weights_ : dict[str, float]
         Donor unit name -> weight, all non-negative, summing to 1.
     units_ : list[str]
-        All units in the order used internally; ``units_[0]`` is the treated unit.
+        All units in the order used internally; ``units_[0]`` is the treated
+        unit. For a multi-treated fit (``treated`` passed as an iterable),
+        ``units_[0]`` is the comma-joined group label (e.g. ``"u0,u1"``)
+        rather than a single panel unit name.
     periods_ : numpy.ndarray
         Time index of length ``T`` in row order of the internal outcome matrix.
     actual_ : numpy.ndarray
@@ -70,9 +73,14 @@ class Synth:
     gap_ : numpy.ndarray
         ``actual_ - synthetic_``.
     att_ : float
-        Mean post-treatment gap (in original outcome units).
+        Mean post-treatment gap (in original outcome units). For a
+        multi-treated fit this is the effect on the treated-group *mean*;
+        the total incremental effect is ``att_ * n_treated * n_post_periods``
+        (downstream consumers such as geolift-py do this multiplication —
+        do not double-count).
     att_pct_ : float
-        ``att_`` divided by ``mean(actual_[pre])``.
+        ``att_`` divided by ``mean(actual_[pre])``. Same treated-group-mean
+        semantics as ``att_`` for multi-treated fits.
     rmspe_pre_ : float
         Pre-period root-mean-squared prediction error, normalized by
         ``|mean(actual_[pre])|``.
@@ -100,7 +108,14 @@ class Synth:
         unit, time, outcome
             Column names in ``panel``.
         treated
-            Value in the ``unit`` column identifying the treated unit.
+            Value in the ``unit`` column identifying the treated unit, or an
+            iterable of such values. An iterable designates a treated *group*;
+            the units are collapsed to their elementwise mean and excluded
+            from the donor pool (see
+            :func:`augsynth_py.synth._panel.long_to_wide`). ``actual_``,
+            ``synthetic_``, ``att_``, and ``att_pct_`` then refer to the
+            treated-group mean. Typed ``Any`` because polars unit values are
+            heterogeneous (str, int, date, ...).
         treatment_time
             First period considered post-treatment. Rows with ``time <
             treatment_time`` form the pre-period used for fitting.

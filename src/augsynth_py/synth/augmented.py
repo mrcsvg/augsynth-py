@@ -219,6 +219,14 @@ def _fit_at_lambda(
     the LOO-CV layer from M2 and the input-validation surface from D7. Use
     this function only from tests and from M2/M3.
 
+    ``treated`` may be a unit value or an iterable of unit values. An
+    iterable designates a treated *group*; the units are collapsed to their
+    elementwise mean and excluded from the donor pool (see
+    :func:`augsynth_py.synth._panel.long_to_wide`). The ``actual``,
+    ``synthetic``, and ``gap`` fields of the result then refer to the
+    treated-group mean. Typed ``Any`` because polars unit values are
+    heterogeneous (str, int, date, ...).
+
     The flow:
 
     1. Reshape the panel via :func:`augsynth_py.synth._panel.long_to_wide`.
@@ -501,7 +509,13 @@ class AugSynth:
     rmspe_pre_, pre_mask_, treated_, treatment_time_
         Mirror the corresponding ``Synth`` attributes; ``synthetic_``,
         ``gap_``, ``att_``, ``att_pct_``, ``rmspe_pre_`` refer to the
-        augmented counterfactual rather than the pure SCM one.
+        augmented counterfactual rather than the pure SCM one. As on
+        ``Synth``, for a multi-treated fit (``treated`` passed as an
+        iterable) ``units_[0]`` is the comma-joined group label rather than
+        a single panel unit name, and ``att_`` / ``att_pct_`` refer to the
+        treated-group *mean*: the total incremental effect is
+        ``att_ * n_treated * n_post_periods`` (downstream consumers such as
+        geolift-py do this multiplication — do not double-count).
     """
 
     def __init__(
@@ -527,8 +541,27 @@ class AugSynth:
     ) -> AugSynth:
         """Fit AugSynth on a long-format panel.
 
-        Parameters mirror :meth:`Synth.fit` exactly. See the class
-        docstring for the attribute surface populated by this call.
+        Parameters mirror :meth:`Synth.fit`. See the class docstring for
+        the attribute surface populated by this call.
+
+        Parameters
+        ----------
+        panel
+            Long-format panel; must be balanced across ``(unit, time)``.
+        unit, time, outcome
+            Column names in ``panel``.
+        treated
+            Value in the ``unit`` column identifying the treated unit, or an
+            iterable of such values. An iterable designates a treated *group*;
+            the units are collapsed to their elementwise mean and excluded
+            from the donor pool (see
+            :func:`augsynth_py.synth._panel.long_to_wide`). ``actual_``,
+            ``synthetic_``, ``att_``, and ``att_pct_`` then refer to the
+            treated-group mean. Typed ``Any`` because polars unit values are
+            heterogeneous (str, int, date, ...).
+        treatment_time
+            First period considered post-treatment. Rows with ``time <
+            treatment_time`` form the pre-period used for fitting.
 
         Returns
         -------
