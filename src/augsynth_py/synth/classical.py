@@ -96,7 +96,9 @@ class Synth:
         weights, matching R ``augsynth``'s ``scaled_l2_imbalance``. Values
         below 1 mean the fitted weights balance better than the uniform
         baseline; as a ratio it is invariant to any constant normalization of
-        the norm.
+        the norm. If the uniform baseline fits the pre-period exactly, this
+        follows the IEEE convention of unguarded R division: ``inf`` when the
+        fitted imbalance is positive, ``nan`` when both are zero (0/0).
     """
 
     def __init__(self, *, fixedeff: bool = True) -> None:

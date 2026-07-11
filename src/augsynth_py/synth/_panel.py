@@ -147,7 +147,9 @@ def imbalance(
 ) -> tuple[float, float]:
     r"""Pre-period L2 imbalance and its uniform-weight-scaled version.
 
-    Matches the R ``augsynth`` definitions:
+    This is the pre-treatment fit / imbalance quantity of Ben-Michael, Feller
+    & Rothstein (2021), §3, as reported by the R ``augsynth`` package (the
+    parity oracle, not the definitional source):
 
     .. math::
 
@@ -157,6 +159,14 @@ def imbalance(
 
     with :math:`w_{\text{unif}} = \mathbf{1}/J`. The scaled version is a ratio
     and is therefore invariant to any constant normalization of the norm.
+
+    When the uniform baseline fits ``y1_pre`` exactly (denominator 0), the
+    scaled value follows the IEEE convention that unguarded R division
+    produces: ``inf`` if the fitted imbalance is positive, ``nan`` if both
+    numerator and denominator are zero (0/0). Assumes ``J >= 1``; callers are
+    gated by :func:`long_to_wide`, which raises
+    :class:`~augsynth_py.exceptions.EmptyDonorPoolError` for an empty donor
+    pool.
 
     Parameters
     ----------
@@ -170,14 +180,23 @@ def imbalance(
 
     Returns
     -------
-    l2_imbalance, scaled_l2_imbalance
+    l2_imbalance : float
+        L2 norm of the pre-period residual under the fitted weights.
+    scaled_l2_imbalance : float
+        ``l2_imbalance`` divided by the L2 imbalance of uniform ``1/J``
+        weights; ``inf`` or ``nan`` per the zero-denominator convention above.
     """
     n_donors = y0_pre.shape[1]
     resid = y1_pre - y0_pre @ weights
     l2 = float(np.linalg.norm(resid))
     resid_unif = y1_pre - y0_pre @ np.full(n_donors, 1.0 / n_donors)
     denom = float(np.linalg.norm(resid_unif))
-    scaled = l2 / denom if denom > 0 else 0.0
+    if denom > 0:
+        scaled = l2 / denom
+    elif l2 > 0:
+        scaled = float("inf")
+    else:
+        scaled = float("nan")
     return l2, scaled
 
 

@@ -13,7 +13,9 @@ def test_imbalance_matches_manual_norm() -> None:
     rng = np.random.default_rng(1)
     y1 = rng.normal(size=10)
     y0 = rng.normal(size=(10, 4))
-    w = np.array([0.25, 0.25, 0.25, 0.25])
+    # Non-uniform weights so the scaled assertion distinguishes the fitted
+    # numerator from the uniform-baseline denominator.
+    w = np.array([0.7, 0.1, 0.1, 0.1])
     l2, scaled = imbalance(y1, y0, w)
 
     resid = y1 - y0 @ w
@@ -29,6 +31,24 @@ def test_scaled_imbalance_is_one_for_uniform_weights() -> None:
     y0 = rng.normal(size=(8, 3))
     _, scaled = imbalance(y1, y0, np.full(3, 1 / 3))
     np.testing.assert_allclose(scaled, 1.0)
+
+
+def test_zero_denominator_follows_ieee_convention() -> None:
+    # Identical donor columns equal to y1: the uniform 1/J baseline fits
+    # exactly, so the denominator is 0. Convention matches unguarded R
+    # division: x/0 = Inf, 0/0 = NaN.
+    y1 = np.array([1.0, 2.0, 3.0])
+    y0 = np.column_stack([y1, y1])
+
+    # Weights sum to 2 -> fitted residual is -y1, so l2 > 0: scaled is inf.
+    l2, scaled = imbalance(y1, y0, np.array([1.0, 1.0]))
+    assert l2 > 0.0
+    assert scaled == float("inf")
+
+    # Uniform weights also fit exactly -> 0/0: scaled is nan.
+    l2, scaled = imbalance(y1, y0, np.array([0.5, 0.5]))
+    np.testing.assert_allclose(l2, 0.0, atol=1e-15)
+    assert np.isnan(scaled)
 
 
 def test_synth_exposes_imbalance_attributes() -> None:
