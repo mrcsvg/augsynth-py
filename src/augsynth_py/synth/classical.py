@@ -31,6 +31,7 @@ from numpy.typing import NDArray
 
 from augsynth_py.synth._panel import (
     apply_unit_fixedeff,
+    imbalance,
     long_to_wide,
     pre_period_mask,
 )
@@ -85,6 +86,17 @@ class Synth:
     rmspe_pre_ : float
         Pre-period root-mean-squared prediction error, normalized by
         ``|mean(actual_[pre])|``.
+    l2_imbalance_ : float
+        Pre-period L2 imbalance ``||y1_pre - Y0_pre @ w||_2``, computed in the
+        same space the weights were fit in (i.e. the demeaned pre-period fit
+        space when ``fixedeff=True``). Matches the R ``augsynth``
+        ``l2_imbalance`` definition.
+    scaled_l2_imbalance_ : float
+        ``l2_imbalance_`` divided by the L2 imbalance of uniform ``1/J`` donor
+        weights, matching R ``augsynth``'s ``scaled_l2_imbalance``. Values
+        below 1 mean the fitted weights balance better than the uniform
+        baseline; as a ratio it is invariant to any constant normalization of
+        the norm.
     """
 
     def __init__(self, *, fixedeff: bool = True) -> None:
@@ -141,6 +153,7 @@ class Synth:
         y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
 
         weights = self._solve_simplex_qp(y1_pre, y0_pre)
+        l2_imb, scaled_l2_imb = imbalance(y1_pre, y0_pre, weights)
 
         synthetic_fit = y_fit[:, donor_idx] @ weights
         # Re-add the treated unit's pre-period offset so the counterfactual is on
@@ -170,6 +183,8 @@ class Synth:
         self.att_: float = att
         self.att_pct_: float = float(att_pct)
         self.rmspe_pre_: float = rmspe_pre
+        self.l2_imbalance_: float = l2_imb
+        self.scaled_l2_imbalance_: float = scaled_l2_imb
         self.pre_mask_: NDArray[np.bool_] = pre_mask
         self.treated_: Any = treated
         self.treatment_time_: Any = treatment_time

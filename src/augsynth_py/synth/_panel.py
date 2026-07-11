@@ -140,6 +140,47 @@ def long_to_wide(
     return y_matrix, ordered_units, periods, treated_idx
 
 
+def imbalance(
+    y1_pre: NDArray[np.float64],
+    y0_pre: NDArray[np.float64],
+    weights: NDArray[np.float64],
+) -> tuple[float, float]:
+    r"""Pre-period L2 imbalance and its uniform-weight-scaled version.
+
+    Matches the R ``augsynth`` definitions:
+
+    .. math::
+
+        \text{l2} = \lVert y_{1,\text{pre}} - Y_{0,\text{pre}} w \rVert_2, \quad
+        \text{scaled} = \frac{\text{l2}}{\lVert y_{1,\text{pre}}
+        - Y_{0,\text{pre}} w_{\text{unif}} \rVert_2},
+
+    with :math:`w_{\text{unif}} = \mathbf{1}/J`. The scaled version is a ratio
+    and is therefore invariant to any constant normalization of the norm.
+
+    Parameters
+    ----------
+    y1_pre
+        Treated pre-period vector, shape ``(T0,)``. Caller supplies the same
+        (demeaned) space the weights were fit in.
+    y0_pre
+        Donor pre-period matrix, shape ``(T0, J)``.
+    weights
+        Length-``J`` fitted weight vector.
+
+    Returns
+    -------
+    l2_imbalance, scaled_l2_imbalance
+    """
+    n_donors = y0_pre.shape[1]
+    resid = y1_pre - y0_pre @ weights
+    l2 = float(np.linalg.norm(resid))
+    resid_unif = y1_pre - y0_pre @ np.full(n_donors, 1.0 / n_donors)
+    denom = float(np.linalg.norm(resid_unif))
+    scaled = l2 / denom if denom > 0 else 0.0
+    return l2, scaled
+
+
 def pre_period_mask(
     periods: NDArray[Any],
     treatment_time: Any,
