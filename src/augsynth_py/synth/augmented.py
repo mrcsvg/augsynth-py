@@ -631,9 +631,15 @@ class AugSynth:
 
         # Imbalance is computed in the period-demeaned pre-period fit space
         # with the effective weights (omega + gamma), so it reflects the
-        # augmented fit. The space choice is provisional until the Task 6
-        # parity test pins it against R; if R disagrees, change which
-        # matrices are passed here — never the imbalance helper itself.
+        # augmented fit. The space choice is immaterial: with lambda > 0 and
+        # period demeaning, gamma sums to exactly 0 (and omega sums to 1), so
+        # the residual — and hence both imbalance values — is identical in
+        # period-demeaned and raw unit-demeaned space. The only genuinely open
+        # question was the weights choice (effective omega + gamma vs SCM-only
+        # omega); it is now pinned to EFFECTIVE weights, matching R augsynth's
+        # progfunc='Ridge' l2_imbalance, by
+        # tests/validation_against_r/test_imbalance.py. If a change is ever
+        # needed, change what is passed here — never the imbalance helper.
         l2_imb, scaled_l2_imb = imbalance(y1_pre_pdem, y0_pre_pdem, effective)
 
         pre_actual_mean = float(actual[pre_mask].mean())

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import polars as pl
 
@@ -82,4 +84,10 @@ def test_augsynth_exposes_imbalance_attributes() -> None:
     )
     assert isinstance(est.l2_imbalance_, float)
     assert isinstance(est.scaled_l2_imbalance_, float)
+    assert math.isfinite(est.l2_imbalance_)
+    assert math.isfinite(est.scaled_l2_imbalance_)
     assert est.l2_imbalance_ >= 0.0
+    # Provably <= 1: uniform 1/J is simplex-feasible, so the SCM optimum
+    # satisfies l2_scm <= l2_unif; and gamma = 0 is ridge-feasible, so the
+    # augmented optimum satisfies l2_aug <= l2_scm <= l2_unif.
+    assert est.scaled_l2_imbalance_ <= 1.0 + 1e-9
