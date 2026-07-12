@@ -184,7 +184,123 @@ rewrites) and the empirical max-delta table.
 
 ---
 
-## 3. Generalized synthetic control (Xu, 2017)
+## 3. Multi-treated pooling and L2 imbalance (P0.1)
+
+Two cross-cutting facilities added for the geo-experimentation surface. Neither
+introduces a new estimator: both are shared infrastructure consumed by
+`Synth` (§1) and `AugSynth` (§2). They live in
+[`src/augsynth_py/synth/_panel.py`](../src/augsynth_py/synth/_panel.py).
+
+### 3.1 Multi-treated pooling
+
+**References:** Doudchenko & Imbens (2016) and Ben-Michael, Feller & Rothstein
+(2021) both frame synthetic control for a treated *unit*; the pooled-group
+extension for a block treatment applied to several units at a common
+intervention time is the standard reduction used by the R `augsynth` package.
+R `augsynth` is the parity **oracle** here, not the definitional source.
+
+**Code location:** [`long_to_wide`](../src/augsynth_py/synth/_panel.py) in
+`_panel.py`. `treated` accepts either a single unit value or an iterable of unit
+values.
+
+**Method.** When `treated` names a group $G = \{g_1, \dots, g_m\}$, the treated
+units are collapsed into a single fit target: their **elementwise mean** across
+units at each time period,
+
+$$
+\bar y_{G,t} \;=\; \frac{1}{m} \sum_{g \in G} y_{g,t},
+$$
+
+placed at column 0 of the outcome matrix, with all $g \in G$ removed from the
+donor pool. The estimator then fits this pooled series exactly as it would a
+single treated unit. Consequently `actual_`, `synthetic_`, `att_`, and
+`att_pct_` all refer to the treated-**group mean**; for a flow outcome the total
+incremental effect is `att_` $\times\, m \times T_{\text{post}}$ (number of
+treated units times number of post periods). `units_[0]` is the comma-joined,
+string-sorted label of the treated group (e.g. `[2, 10]` labels as `"10,2"`).
+
+**Why collapsing before demeaning is valid.** `Synth` subtracts each unit's
+pre-period mean (`apply_unit_fixedeff`) before the QP. It would be equally
+correct to demean every treated unit first and then average the demeaned
+columns; the shipped code averages first and demeans once. These give the
+identical result because **per-unit demeaning is a linear map applied
+identically to each column, so it distributes over the cross-column average**
+(collapse-then-demean equals demean-then-collapse). Averaging first is the
+cheaper of the two equivalent orders. (This is a distributivity property of a
+shared linear operator over an average — not a claim that two different
+operations commute.)
+
+**Validation.**
+[`tests/validation_against_r/test_multitreated.py`](../tests/validation_against_r/test_multitreated.py)
+designates `chicago` and `portland` as a hypothetical treated group on
+`GeoLift_PreTest` and asserts the pooled counterfactual path matches
+`augsynth`'s block-treatment fit strictly. Unit coverage for the pooling logic
+(mean collapse, donor-pool removal, label formatting, order invariance) is in
+[`tests/unit/test_multitreated.py`](../tests/unit/test_multitreated.py).
+
+### 3.2 L2 imbalance diagnostics
+
+**Paper:** Ben-Michael, Feller & Rothstein (2021), §3 — the pre-treatment fit /
+imbalance quantity. The exact scalar reported (`l2_imbalance`,
+`scaled_l2_imbalance`) mirrors what R `augsynth` surfaces; R is the parity
+oracle, not the definitional source.
+
+**Code location:** [`imbalance`](../src/augsynth_py/synth/_panel.py) in
+`_panel.py`, exposed as the fitted attributes `l2_imbalance_` and
+`scaled_l2_imbalance_` on both `Synth` and `AugSynth`.
+
+**Definitions.** For a treated pre-period vector $y_{1,\text{pre}}$, donor
+pre-period matrix $Y_{0,\text{pre}} \in \mathbb{R}^{T_0 \times J}$, and fitted
+weights $w$,
+
+$$
+\text{l2} \;=\; \big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w \big\|_2,
+\qquad
+\text{scaled} \;=\;
+\frac{\big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w \big\|_2}
+     {\big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w_{\text{unif}} \big\|_2},
+\qquad w_{\text{unif}} = \tfrac{1}{J}\mathbf{1}.
+$$
+
+`l2_imbalance_` is the plain (unnormalized) residual norm in the space the
+weights were fit in. `scaled_l2_imbalance_` divides it by the imbalance of the
+uniform $1/J$ donor average. Because the scaled version is a **ratio of two
+norms in the same space**, it is invariant to any constant normalization of the
+norm — R's `l2_imbalance` uses the plain, unnormalized norm (so the two agree at
+ratio 1.0 on the scaled quantity regardless of that convention).
+
+**Zero-denominator (IEEE) convention.** When the uniform baseline fits
+$y_{1,\text{pre}}$ exactly, the denominator is 0. The code follows the IEEE
+semantics that an unguarded R division produces: denominator $> 0$ gives
+$\text{l2}/\text{denom}$; denominator $= 0$ with $\text{l2} > 0$ gives `inf`;
+$0/0$ gives `nan`.
+
+**Space and weights per estimator.** `imbalance` is space-agnostic — the caller
+supplies $y_{1,\text{pre}}$, $Y_{0,\text{pre}}$, and $w$ in whatever space the
+weights were fit:
+
+- **`Synth`** computes it in the **unit-fixed-effect-demeaned** space
+  (`apply_unit_fixedeff`, §1) using the **simplex** weights $w^\ast$.
+- **`AugSynth`** computes it in the **period-demeaned** space
+  (`_period_demean_pre`, §2) using the **effective** weights $\omega + \gamma$
+  (SCM plus ridge augmentation), matching R `augsynth(progfunc='Ridge')`. The
+  choice of *weights* (effective, not SCM-only $\omega$) is what the parity test
+  pins; the choice of *space* is immaterial for AugSynth because $\gamma$ sums to
+  0 whenever $\lambda > 0$ and $\omega$ sums to 1, so the period-mean term
+  cancels in the residual — only the weights choice is load-bearing.
+
+**Validation.**
+[`tests/validation_against_r/test_imbalance.py`](../tests/validation_against_r/test_imbalance.py)
+asserts both `l2_imbalance_` (raw) and `scaled_l2_imbalance_` match
+`augsynth` for `Synth` (`progfunc='None'`) and `AugSynth` (`progfunc='Ridge'`)
+on `GeoLift_PreTest`. The AugSynth case is the one that pins the effective-weights
+choice: had R used SCM-only $\omega$, both the raw and scaled numbers would
+disagree. Unit coverage (the IEEE inf/nan branches, the ratio invariance) is in
+[`tests/unit/test_imbalance.py`](../tests/unit/test_imbalance.py).
+
+---
+
+## 4. Generalized synthetic control (Xu, 2017)
 
 **Paper:** Xu, Y. (2017). Generalized Synthetic Control Method: Causal
 Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1),
@@ -194,7 +310,7 @@ Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1),
 
 ---
 
-## 4. Conformal inference for synthetic controls (Chernozhukov, Wuthrich & Zhu, 2021)
+## 5. Conformal inference for synthetic controls (Chernozhukov, Wuthrich & Zhu, 2021)
 
 **Paper:** Chernozhukov, V., Wuthrich, K., & Zhu, Y. (2021). An Exact and
 Robust Conformal Inference Method for Counterfactual and Synthetic Controls.
@@ -207,7 +323,7 @@ treatment effect by permuting residuals across the pre-period.
 
 ---
 
-## 5. Power analysis and market selection (orchestration layer)
+## 6. Power analysis and market selection (orchestration layer)
 
 **Reference:** GeoLift R package documentation and underlying use of ASCM
 for simulation-based power calculation.
