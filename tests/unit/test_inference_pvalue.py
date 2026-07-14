@@ -56,7 +56,7 @@ def test_clear_post_jump_less_plausible_at_zero_than_at_estimate():
     )
     p0 = conformal_pvalue(fit, 0.0, permutation_type="block")
     p_true = conformal_pvalue(fit, fit.att_, permutation_type="block")
-    assert p0 <= p_true
+    assert p0 < p_true
 
 
 def test_h0_adjustment_shifts_residuals():
@@ -74,7 +74,7 @@ def test_h0_adjustment_shifts_residuals():
         treated="trt",
         treatment_time=8,
     )
-    assert conformal_pvalue(fit, fit.att_) >= conformal_pvalue(fit, 0.0)
+    assert conformal_pvalue(fit, fit.att_) > conformal_pvalue(fit, 0.0)
 
 
 @pytest.mark.parametrize("Est", [Synth, AugSynth])
@@ -114,3 +114,21 @@ def test_iid_path_reproducible_via_rng():
     p1 = conformal_pvalue(fit, 0.0, permutation_type="iid", ns=1000, rng=np.random.default_rng(1))
     p2 = conformal_pvalue(fit, 0.0, permutation_type="iid", ns=1000, rng=np.random.default_rng(1))
     assert p1 == p2
+
+
+def test_conformal_pvalue_does_not_mutate_gap():
+    base = np.linspace(1.0, 2.0, 12)
+    treated = base.copy()
+    treated[8:] += 2.0
+    panel = _panel(treated, [base, base + 1.0])
+    fit = Synth(fixedeff=False).fit(
+        panel,
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="trt",
+        treatment_time=8,
+    )
+    snapshot = fit.gap_.copy()
+    conformal_pvalue(fit, 5.0)
+    np.testing.assert_array_equal(fit.gap_, snapshot)
