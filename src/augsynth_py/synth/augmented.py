@@ -669,4 +669,77 @@ class AugSynth:
         self.treated_: Any = treated
         self.treatment_time_: Any = treatment_time
 
+        # Private scaffolding for the CWZ 2021 conformal refit-under-null
+        # (see _conformal_null_residuals). Raw outcome scale; the effective
+        # penalty ``lambda_`` is already stored as ``self.lambda_``. Not part
+        # of the public API.
+        self._y_matrix: NDArray[np.float64] = y_matrix
+        self._treated_idx: int = treated_idx
+        self._donor_idx: NDArray[np.intp] = donor_idx
+
         return self
+
+    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+        r"""Full-window residuals under the constant-effect null (CWZ 2021).
+
+        The augmented analogue of :meth:`Synth._conformal_null_residuals`. To
+        test :math:`H_0` that the post-treatment effect is a constant ``h0``,
+        subtract ``h0`` from the treated unit's post-period outcomes and
+        **refit the augmented synthetic control over the entire window** (all
+        ``T`` periods) at the already-selected penalty ``self.lambda_``, then
+        return the residual ``adjusted_treated - synthetic`` over all ``T``
+        periods. Under a true :math:`H_0` these residuals are exchangeable,
+        which makes the moving-block permutation test exact (Chernozhukov,
+        Wüthrich & Zhu 2021, §3).
+
+        The full-window refit reuses the exact ``omega``/``gamma`` machinery of
+        the point-estimate path (:meth:`fit` via
+        :func:`_period_demean_pre`, :meth:`Synth._solve_simplex_qp`,
+        :func:`_ridge_augment`), only over all ``T`` periods rather than the
+        pre-period. Matches ``augsynth``'s conformal refit
+        (``compute_permute_test_stats`` with ``progfunc='Ridge'``) on the
+        ``GeoLift_PreTest`` fixture to solver tolerance.
+
+        Parameters
+        ----------
+        h0
+            Hypothesized constant post-period effect, subtracted from the
+            treated unit on the post positions (``~pre_mask_``).
+
+        Returns
+        -------
+        NDArray[np.float64]
+            Length-``T`` residual vector on the original outcome scale.
+
+        Notes
+        -----
+        Does not mutate any stored array: the outcome matrix is copied before
+        the ``h0`` adjustment.
+        """
+        y_adj = self._y_matrix.copy()
+        post_mask = ~self.pre_mask_
+        y_adj[post_mask, self._treated_idx] -= h0
+
+        # Refit fixed effects over the FULL (h0-adjusted) window, matching the
+        # Synth conformal convention and R augsynth's Ridge refit.
+        if self.fixedeff:
+            offsets = y_adj.mean(axis=0)
+        else:
+            offsets = np.zeros(y_adj.shape[1], dtype=np.float64)
+        y_fit = y_adj - offsets
+
+        y1_full = y_fit[:, self._treated_idx]
+        y0_full = y_fit[:, self._donor_idx]
+
+        # Period-demean over the full window (same step _fit_at_lambda applies
+        # to the pre-period), then solve omega + gamma at the fitted lambda_.
+        y0_pdem, y1_pdem = _period_demean_pre(y0_full, y1_full)
+        omega = Synth._solve_simplex_qp(y1_pdem, y0_pdem)
+        gamma, _ = _ridge_augment(omega, y0_pdem, y1_pdem, lambda_=self.lambda_)
+
+        # The period-mean shift cancels in this projection (omega sums to 1,
+        # gamma to 0), so y0_full (unit-demeaned only) is the correct target —
+        # identical rationale to _fit_at_lambda.
+        synthetic = y0_full @ (omega + gamma) + offsets[self._treated_idx]
+        residuals: NDArray[np.float64] = y_adj[:, self._treated_idx] - synthetic
+        return residuals.astype(np.float64, copy=False)

@@ -191,7 +191,71 @@ class Synth:
         self.treated_: Any = treated
         self.treatment_time_: Any = treatment_time
 
+        # Private scaffolding for the CWZ 2021 conformal refit-under-null
+        # (see _conformal_null_residuals). Stored on the raw outcome scale so
+        # the refit can re-derive its own fixed-effect offsets after adjusting
+        # the treated post-period by h0. Not part of the public API.
+        self._y_matrix: NDArray[np.float64] = y_matrix
+        self._treated_idx: int = treated_idx
+        self._donor_idx: NDArray[np.intp] = donor_idx
+
         return self
+
+    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+        r"""Full-window residuals under the constant-effect null (CWZ 2021).
+
+        Implements the residual construction of Chernozhukov, Wüthrich & Zhu
+        (2021), §3: to test :math:`H_0` that the post-treatment effect is a
+        constant ``h0``, subtract ``h0`` from the treated unit's post-period
+        outcomes and **refit the synthetic control over the entire window**
+        (all ``T`` periods, not just the pre-period), then return the residual
+        ``adjusted_treated - synthetic`` over all ``T`` periods. Under a true
+        :math:`H_0` these full-window residuals are exchangeable, which is what
+        makes the subsequent moving-block permutation test exact.
+
+        This deliberately re-fits — unlike the point-estimate path
+        (:meth:`fit`), whose weights are pre-period-only. The two are different
+        by design: the ATT is a pre-period-anchored counterfactual, while the
+        conformal null residual is CWZ's full-window exchangeability construct.
+        Matches ``augsynth``'s conformal refit (``compute_permute_test_stats``)
+        on the ``GeoLift_PreTest`` fixture to solver tolerance.
+
+        Parameters
+        ----------
+        h0
+            Hypothesized constant post-period effect. Subtracted from the
+            treated unit's outcomes on the post positions (``~pre_mask_``).
+
+        Returns
+        -------
+        NDArray[np.float64]
+            Length-``T`` residual vector ``adjusted_treated - synthetic`` over
+            the full window, on the original outcome scale.
+
+        Notes
+        -----
+        Does not mutate any stored array: the outcome matrix is copied before
+        the ``h0`` adjustment.
+        """
+        y_adj = self._y_matrix.copy()
+        post_mask = ~self.pre_mask_
+        y_adj[post_mask, self._treated_idx] -= h0
+
+        # Refit fixed effects over the FULL window (CWZ treats the whole,
+        # h0-adjusted span as the balancing period), not the pre-period only.
+        if self.fixedeff:
+            offsets = y_adj.mean(axis=0)
+        else:
+            offsets = np.zeros(y_adj.shape[1], dtype=np.float64)
+        y_fit = y_adj - offsets
+
+        y1_full = y_fit[:, self._treated_idx]
+        y0_full = y_fit[:, self._donor_idx]
+        weights = self._solve_simplex_qp(y1_full, y0_full)
+
+        synthetic = y0_full @ weights + offsets[self._treated_idx]
+        residuals: NDArray[np.float64] = y_adj[:, self._treated_idx] - synthetic
+        return residuals.astype(np.float64, copy=False)
 
     @staticmethod
     def _solve_simplex_qp(
