@@ -442,8 +442,10 @@ Parity is pinned in
   **exactly** at multiple $h_0$, for both `Synth` (`progfunc='None'`) and
   `AugSynth` (`progfunc='Ridge'`) on `GeoLift_PreTest`. The refit-under-null is
   what makes this hold; the rejected no-refit shortcut did not.
-- **`iid` p-value — statistical.** Agrees with the `block` value within
-  Monte-Carlo tolerance for a fixed `rng`.
+- **`iid` p-value — statistical.** Agrees with R `augsynth`'s conformal
+  p-value within a documented Monte-Carlo tolerance (`0.03`) for a fixed `rng`
+  and large `ns`; seeds do not transfer between R and Python, so exact parity is
+  not expected on this path.
 - **Confidence interval — transitive.** R `augsynth` exposes no *aggregate*
   conformal CI (only per-period intervals), so there is no direct oracle for
   `conformal_interval`. It is validated transitively: the interval is pure test
