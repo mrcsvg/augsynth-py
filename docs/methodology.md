@@ -428,10 +428,19 @@ a small `sd`, yet a low-power conformal test accepts a broad range of $h_0$). If
 an accepted endpoint reaches a grid boundary the span is doubled (centre,
 `grid_size` and the unioned `0.0` preserved) and re-scored, up to 8 doublings.
 If truncation persists at the cap a `UserWarning` is emitted and the widest
-computed bounds are returned as a lower bound on the true interval. This is
-distinct from an **empty** acceptance region (peak p-value below $\alpha$, e.g.
-$T < 1/\alpha$ under `block`), which returns `(nan, nan)` and which widening
-cannot fix.
+computed bounds are returned as a lower bound on the true interval. Under `block`
+the $p(h_0)$ curve peaks near a well-specified $h_0$ and decays to a **floor of
+$1/T$** (the $j=0$ identity shift always ties itself) at extreme $h_0$; when
+$T \le 1/\alpha$ that floor keeps $p(h_0) \ge 1/T \ge \alpha$ at *every* $h_0$,
+so the acceptance region is **unbounded** and lands in exactly this
+truncation/`UserWarning` branch.
+
+This is distinct from an **empty** acceptance region, which returns `(nan, nan)`
+and which widening cannot fix. Empty requires the *peak* of $p(h_0)$ to fall
+below $\alpha$ — driven by residual **non-exchangeability** (a poor / trending
+fit), and only *possible* when $1/T < \alpha$ (i.e. $T > 1/\alpha$); it is **not**
+caused by, and does not occur under, the small-$T$ ($T \le 1/\alpha$) floor
+regime above.
 
 ### 5.4 Validation
 

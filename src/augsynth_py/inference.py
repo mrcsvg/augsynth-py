@@ -342,20 +342,28 @@ def conformal_interval(
     -------
     tuple[float, float]
         ``(lower, upper)`` bounds of the confidence interval, or
-        ``(nan, nan)`` if no grid point is accepted (an empty acceptance
+        ``(nan, nan)`` if *no* grid point is accepted (an empty acceptance
         region). Refining or widening the grid does *not* recover a non-empty
-        interval in that case; the two causes are structural:
+        interval in that case.
 
-        (a) The attainable peak p-value over ``h0`` is below ``alpha``. Under
-        the block scheme the p-value is a multiple of ``1/T`` (``T`` = total
-        periods) and peaks at :math:`\approx 1/T`, so a :math:`(1-\alpha)` CI
-        needs roughly ``T >= 1/alpha`` periods; e.g. a 95% CI needs
-        ``T >= 20``. Below that threshold the entire grid is rejected no matter
-        how fine or wide it is.
+        Empty ``(nan, nan)`` requires the *peak* of the ``p(h0)`` curve to fall
+        below ``alpha``. Under the block scheme ``p(h0)`` peaks near a
+        well-specified ``h0`` (large — the ``j = 0`` identity shift makes the
+        residuals nearly tie, so ``p`` approaches 1) and decays to a **floor of
+        ``1/T``** (``T`` = total periods; the identity shift always ties itself,
+        so the count is at least 1) at extreme ``h0``. An empty region therefore
+        arises only from **residual non-exchangeability** — a poor / trending /
+        heteroskedastic fit that depresses even the peak below ``alpha``. It is
+        *only possible when* ``1/T < alpha`` (i.e. ``T > 1/alpha``, e.g.
+        ``T > 20`` for a 95% CI); otherwise the ``1/T`` floor keeps every ``h0``
+        accepted.
 
-        (b) Residual non-exchangeability (e.g. trending or heteroskedastic
-        gaps) can depress the peak p-value below ``alpha`` even when ``T`` is
-        adequate, again emptying the acceptance region.
+        The complementary regime, ``T <= 1/alpha`` (e.g. ``T = 14`` at
+        ``alpha = 0.05``, floor ``1/14 ~ 0.071 >= 0.05``), is *not* empty: the
+        floor holds ``p(h0) >= 1/T >= alpha`` at **every** ``h0``, so the
+        acceptance region is **unbounded**. That hits the truncation guard
+        (widening + ``UserWarning`` + finite truncated bounds; see *Notes*),
+        never ``(nan, nan)``.
 
     Notes
     -----
@@ -400,7 +408,11 @@ def conformal_interval(
     pre_mask = np.asarray(fit.pre_mask_, dtype=np.bool_)
     post_gap = gap[~pre_mask]
 
-    center = float(np.mean(post_gap))
+    # The grid centre is the point estimate att_, which equals mean(post_gap) by
+    # construction on both Synth and AugSynth (att_ = mean(gap[~pre_mask])); this
+    # is why att_ is part of the _FittedSC protocol. post_gap still supplies the
+    # dispersion for the span.
+    center = float(fit.att_)
     sd = float(np.std(post_gap, ddof=1)) if post_gap.size > 1 else 0.0
     # Degenerate / near-perfect pre-fit: the point-estimate post gaps carry no
     # usable dispersion (a single post period, or sd at the solver-noise floor

@@ -102,6 +102,39 @@ def test_wider_interval_contains_zero_for_small_effect():
     assert lo <= 0.0 <= hi
 
 
+def test_empty_acceptance_region_returns_nan_nan():
+    # (nan, nan) requires the PEAK of the p(h0) curve to fall below alpha, which
+    # is driven by residual NON-EXCHANGEABILITY (a poor fit) and is only possible
+    # when 1/T < alpha (here T=60 -> 1/T ~ 0.017 < 0.05). A steep post-period
+    # RAMP divergence that no *constant* h0 can flatten, tracked only by flat
+    # donors, keeps the post-window statistic atypically large at every h0, so
+    # the peak p(h0) = 2/60 ~ 0.033 < 0.05 and NO grid point (nor 0.0) is
+    # accepted -> the acceptance region is empty.
+    #
+    # This is the opposite regime from the small-T (T <= 1/alpha) case, where the
+    # 1/T floor keeps p(h0) >= alpha at every h0 -> an *unbounded* region and the
+    # truncation guard, never (nan, nan). Deterministic (no RNG): peak p is fixed
+    # by the block ranking and sits well below alpha, so the empty result is
+    # stable across grid sizes.
+    T = 60  # noqa: N806
+    t0 = 30
+    base = np.linspace(1.0, 2.0, T)
+    idx = np.arange(T) - t0
+    ramp = np.where(idx >= 0, idx * 50.0, 0.0)  # steep, non-constant post divergence
+    treated = base + ramp
+    donors = [base, base + 1.0, base - 1.0]  # flat donors cannot reproduce a ramp
+    fit = Synth(fixedeff=False).fit(
+        _panel(treated, donors),
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="trt",
+        treatment_time=t0,
+    )
+    lo, hi = conformal_interval(fit, alpha=0.05, grid_size=201)
+    assert np.isnan(lo) and np.isnan(hi)
+
+
 @pytest.mark.parametrize("bad_side", ["right", "left"])
 def test_conformal_interval_rejects_one_sided(bad_side):
     # A one-sided acceptance region is a half-line, not an interval.
