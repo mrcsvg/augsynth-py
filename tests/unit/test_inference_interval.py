@@ -23,13 +23,26 @@ def _panel(treated_series, donor_series):
     return pl.DataFrame(rows)
 
 
-def _fit_with_effect(effect, T=14, t0=9, n_post_effect=None):  # noqa: N803
+def _fit_with_effect(effect, T=30, t0=20):  # noqa: N803
+    # Powered, imperfect-fit regime. Two properties matter for the CI to be a
+    # genuine bounded interval rather than an artifact:
+    #   * T >= 20 so the block p-value floor 1/T (~0.033) is below alpha=0.05 --
+    #     the conformal test can actually reject, so the acceptance region is
+    #     bounded. With the old T=14 the floor was 1/14 ~ 0.071 > 0.05, making
+    #     the region structurally unbounded (the truncation guard now flags it).
+    #   * Mild noise gives the pre-fit real residual dispersion (sd > 0), so the
+    #     inverted interval has width rather than collapsing to a point.
+    rng = np.random.default_rng(0)
     base = np.linspace(1.0, 2.0, T)
-    treated = base.copy()
+    treated = base + rng.normal(0.0, 0.05, T)
     treated[t0:] += effect
-    panel = _panel(treated, [base, base + 1.5, base - 0.7])
+    donors = [
+        base + rng.normal(0.0, 0.05, T),
+        base + 1.5 + rng.normal(0.0, 0.05, T),
+        base - 0.7 + rng.normal(0.0, 0.05, T),
+    ]
     return Synth(fixedeff=False).fit(
-        panel,
+        _panel(treated, donors),
         unit="unit",
         time="time",
         outcome="y",
@@ -60,17 +73,23 @@ def test_zero_is_evaluated_and_returns_finite_interval():
 
 
 def test_single_post_period_does_not_crash():
-    base = np.linspace(1.0, 2.0, 10)
-    treated = base.copy()
-    treated[9] += 1.0
-    panel = _panel(treated, [base, base + 1.0])
+    # Exactly one post period (post_gap.size == 1 -> sd == 0, center-scaled grid
+    # fallback). T = 25 keeps the block floor 1/25 = 0.04 below alpha = 0.1 so
+    # the region is bounded; mild noise avoids a perfect fit.
+    rng = np.random.default_rng(0)
+    T = 25  # noqa: N806
+    t0 = 24  # one post period
+    base = np.linspace(1.0, 2.0, T)
+    treated = base + rng.normal(0.0, 0.05, T)
+    treated[t0:] += 1.0
+    donors = [base + rng.normal(0.0, 0.05, T), base + 1.0 + rng.normal(0.0, 0.05, T)]
     fit = Synth(fixedeff=False).fit(
-        panel,
+        _panel(treated, donors),
         unit="unit",
         time="time",
         outcome="y",
         treated="trt",
-        treatment_time=9,  # exactly one post period
+        treatment_time=t0,
     )
     lo, hi = conformal_interval(fit, alpha=0.1, grid_size=41)
     assert lo <= hi
@@ -131,3 +150,56 @@ def test_interval_strictly_interior_with_residual_spread():
     assert lo < hi
     assert center - spread < lo
     assert hi < center + spread
+
+
+def test_low_power_interval_expands_past_initial_grid_and_warns():
+    # Truncation guard (I1): the grid span starts at +/-6*sd(post gap) from the
+    # POINT-ESTIMATE gap_, but each point is scored by the full-window refit
+    # acceptance region. Here the donors fit the pre-period almost perfectly
+    # (tiny sd -> a sub-unit initial span) yet two of them carry large, opposite
+    # post-only level jumps, so the refit can absorb almost any constant h0 ->
+    # the conformal test has little power and accepts h0 across a very wide
+    # range. Without the guard, min/max would clip to the tiny initial grid and
+    # silently understate the interval. The guard must widen the grid (far past
+    # the initial span) and, since the region exceeds even the doubling cap
+    # here, emit a UserWarning.
+    T = 40  # noqa: N806
+    t0 = 30
+    rng = np.random.default_rng(0)
+    base = np.linspace(10.0, 12.0, T)
+    post = np.zeros(T)
+    post[t0:] = 1.0
+    treated = base + rng.normal(0.0, 0.005, T)
+    treated[t0:] += 5.0
+    donors = [
+        base + rng.normal(0.0, 0.005, T) + 40.0 * post,  # large +40 post jump
+        base + rng.normal(0.0, 0.005, T) - 40.0 * post,  # large -40 post jump
+        base + rng.normal(0.0, 0.005, T),
+    ]
+    fit = Synth(fixedeff=False).fit(
+        _panel(treated, donors),
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="trt",
+        treatment_time=t0,
+    )
+
+    post_gap = fit.gap_[~fit.pre_mask_]
+    sd = float(np.std(post_gap, ddof=1))
+    center = float(fit.att_)
+    initial_half_span = 6.0 * sd
+    initial_grid_max = center + initial_half_span
+    assert sd > 0.0
+    # The initial +/-6*sd span is sub-unit; the true acceptance region is orders
+    # of magnitude wider, so any correct expansion must blow past it.
+    assert 2.0 * initial_half_span < 1.0
+
+    with pytest.warns(UserWarning, match="truncated"):
+        lo, hi = conformal_interval(fit, alpha=0.05, grid_size=101)
+
+    assert np.isfinite(lo) and np.isfinite(hi)
+    # Expansion happened: the upper bound moved well past the initial grid edge,
+    # and the interval is vastly wider than the initial +/-6*sd span.
+    assert hi > initial_grid_max + 1.0
+    assert (hi - lo) > 20.0 * (2.0 * initial_half_span)

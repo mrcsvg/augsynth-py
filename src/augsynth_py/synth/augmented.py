@@ -731,8 +731,10 @@ class AugSynth:
         y1_full = y_fit[:, self._treated_idx]
         y0_full = y_fit[:, self._donor_idx]
 
-        # Period-demean over the full window (same step _fit_at_lambda applies
-        # to the pre-period), then solve omega + gamma at the fitted lambda_.
+        # Period-demean, then solve omega + gamma at the fitted lambda_. NB:
+        # _period_demean_pre is period-generic despite the ``_pre`` name; here
+        # it is applied over the FULL h0-adjusted window (all T rows), not the
+        # pre-period, matching this refit's full-window balancing.
         y0_pdem, y1_pdem = _period_demean_pre(y0_full, y1_full)
         omega = Synth._solve_simplex_qp(y1_pdem, y0_pdem)
         gamma, _ = _ridge_augment(omega, y0_pdem, y1_pdem, lambda_=self.lambda_)

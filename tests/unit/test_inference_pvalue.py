@@ -1,9 +1,10 @@
 """Unit tests for :func:`augsynth_py.inference.conformal_pvalue`.
 
 These exercise the CWZ 2021 conformal p-value over already-fitted ``Synth`` and
-``AugSynth`` estimators, relying on the no-refit identity documented on
-``conformal_pvalue`` (subtract a constant ``h0`` from the post-period gaps and
-delegate to the permutation core).
+``AugSynth`` estimators. The p-value uses the full-window refit-under-null: the
+estimator's ``_conformal_null_residuals(h0)`` adjusts the treated post-period by
+``h0`` and refits the synthetic control over the entire window, and the
+resulting exchangeable residuals are handed to the permutation core.
 """
 
 import numpy as np

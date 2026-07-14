@@ -194,6 +194,12 @@ def test_block_pvalue_h0_zero_matches_r_exact(
         r_conformal_env, agg="agg", res="res", post_len="pl_", h0=0.0, perm_type="block", ns=1000
     )
     py_p = conformal_pvalue(synth_fit, 0.0, permutation_type="block", side="two-sided")
+    # abs=1e-8 is legitimate for a solver-based rank statistic: the p-value is an
+    # integer count of cyclic shifts over T, so R and Python agree exactly iff
+    # they agree on that integer. The smallest gap between distinct shift
+    # statistics on this fixture (~0.1+) dwarfs the combined R+Python Clarabel
+    # residual noise (~1e-4), so no rank can flip — the counts are identical and
+    # the two p-values coincide to float precision.
     assert py_p == pytest.approx(r_p, abs=1e-8)
 
 
@@ -258,23 +264,33 @@ def test_iid_pvalue_matches_r_within_tolerance(
 
 
 @pytest.mark.requires_r_pkg("augsynth")
-def test_conformal_interval_is_finite_and_brackets_att(
+def test_conformal_interval_brackets_accepted_nulls(
     synth_fit: Synth,
 ) -> None:
-    """The test-inverted CI is finite and brackets ``att_``.
+    """The test-inverted CI contains every null the exact p(h0) parity accepts.
 
     R exposes no aggregate/average-effect conformal CI (``conformal_inf``'s
     average row has ``NA`` bounds), so there is no direct numeric oracle. The
-    interval is validated transitively by the exact p(h0) parity above (it is
-    the acceptance region of that same p-value); here we assert its structural
-    invariants on the real fixture.
+    interval is validated transitively: it is the acceptance region of the same
+    ``conformal_pvalue`` asserted exact against R above, so it must contain every
+    ``h0`` with ``p >= alpha``. Both ``h0 = 0`` (p ~ 0.82) and ``h0 = 50``
+    (p ~ 0.84) are accepted, so both — and ``att_`` — must lie inside.
+
+    On this fixture the post gap is highly volatile, so the aggregate conformal
+    test has little power: the acceptance region is enormous and exceeds the
+    truncation guard's doubling cap, which deterministically emits a
+    ``UserWarning``. That is the correct, non-anti-conservative behavior (the
+    old silent-clip would have understated the interval).
     """
-    lo, hi = conformal_interval(
-        synth_fit, alpha=0.05, grid_size=400, permutation_type="block", side="two-sided"
-    )
+    with pytest.warns(UserWarning, match="truncated"):
+        lo, hi = conformal_interval(
+            synth_fit, alpha=0.05, grid_size=400, permutation_type="block", side="two-sided"
+        )
     assert np.isfinite(lo) and np.isfinite(hi)
     assert lo < hi
     assert lo <= synth_fit.att_ <= hi
+    assert lo <= 0.0 <= hi
+    assert lo <= 50.0 <= hi
 
 
 # ---------------------------------------------------------------------------

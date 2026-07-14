@@ -20,6 +20,7 @@ American Statistical Association, 116(536), 1849-1864.
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Protocol
 
 import numpy as np
@@ -362,6 +363,23 @@ def conformal_interval(
     accurate only to about one grid spacing, ``2 * spread / (grid_size - 1)``;
     increasing ``grid_size`` tightens this resolution.
 
+    **Truncation guard.** The grid span starts at ``6 * sd(post gap)``, derived
+    from the *point-estimate* ``gap_`` dispersion, but each grid point is scored
+    by the *full-window refit* acceptance region — a different, often wider
+    quantity. When the donors fit tightly (small ``sd``) yet the conformal test
+    has little power (a broad range of ``h0`` is accepted), the initial span is
+    far narrower than the region and ``min`` / ``max`` would clip to the grid
+    edges, silently understating (anti-conservatively) the interval. To avoid
+    this, if an accepted endpoint reaches a grid boundary the span is doubled
+    (centre, ``grid_size`` and the unioned ``0.0`` preserved) and the grid is
+    re-scored, up to 8 doublings, stopping once both endpoints are strictly
+    interior. If truncation persists at the cap, a :class:`UserWarning` is
+    emitted and the widest computed bounds are returned as a lower bound on the
+    true interval. This is distinct from the empty-region ``(nan, nan)`` case in
+    *Returns*: there *no* ``h0`` is accepted (peak p-value below ``alpha``),
+    which widening cannot fix; here a boundary-reaching region is accepted and
+    widening extends it.
+
     The sibling ``geolift-py`` package consumes this function to populate
     ``ConfIntervals(method="conformal")``.
 
@@ -384,30 +402,74 @@ def conformal_interval(
 
     center = float(np.mean(post_gap))
     sd = float(np.std(post_gap, ddof=1)) if post_gap.size > 1 else 0.0
+    # Degenerate / near-perfect pre-fit: the point-estimate post gaps carry no
+    # usable dispersion (a single post period, or sd at the solver-noise floor
+    # ~1e-14). A 6*sd span then collapses to a point that both mis-locates the
+    # interval and cannot be widened by doubling, so fall back to a center-scaled
+    # span. The threshold is relative to the outcome scale so it fires on solver
+    # noise but never on a genuine (however small) residual spread.
+    scale = abs(center) if center != 0.0 else 1.0
     spread = 6.0 * sd
-    if spread == 0.0:
-        spread = abs(center) if center != 0.0 else 1.0
+    if spread < 1e-6 * scale:
+        spread = scale
 
-    grid = np.linspace(center - spread, center + spread, grid_size)
-    grid = np.union1d(grid, [0.0])
+    def _accepted(lin: NDArray[np.float64]) -> list[float]:
+        """Return the accepted grid points (``0.0`` always evaluated)."""
+        candidates = np.union1d(lin, [0.0])
+        return [
+            float(h0)
+            for h0 in candidates
+            if conformal_pvalue(
+                fit,
+                float(h0),
+                permutation_type=permutation_type,
+                side=side,
+                ns=ns,
+                rng=rng,
+            )
+            >= alpha
+        ]
 
-    accepted = [
-        float(h0)
-        for h0 in grid
-        if conformal_pvalue(
-            fit,
-            float(h0),
-            permutation_type=permutation_type,
-            side=side,
-            ns=ns,
-            rng=rng,
+    # Test inversion on a finite grid. The grid span is derived from the
+    # point-estimate gap_ dispersion, but each point is scored by the
+    # full-window refit acceptance region — a *different*, often wider quantity
+    # (tight donors -> small sd, yet a low-power conformal test accepts a broad
+    # range of h0). If the accepted set reaches a linspace boundary the interval
+    # is truncated and would silently understate coverage, so widen the span
+    # (double it, keeping the centre, grid_size, and the unioned 0.0) and
+    # re-score until both endpoints are strictly interior or the cap is hit.
+    max_doublings = 8
+    truncated = False
+    accepted: list[float] = []
+    for attempt in range(max_doublings + 1):
+        lin = np.linspace(center - spread, center + spread, grid_size)
+        accepted = _accepted(lin)
+        if not accepted:
+            # Empty acceptance region: widening cannot recover it (the peak
+            # p-value over h0 is below alpha — structural, see Returns).
+            return (float("nan"), float("nan"))
+        truncated = (min(accepted) <= float(lin[0])) or (max(accepted) >= float(lin[-1]))
+        if not truncated or attempt == max_doublings:
+            break
+        spread *= 2.0
+
+    if truncated:
+        warnings.warn(
+            "conformal_interval may be truncated: the acceptance region still "
+            f"reaches a grid boundary after {max_doublings} span doublings "
+            f"(final half-width {spread:g} about center {center:g}). The "
+            "returned bounds understate the interval; the estimator likely has "
+            "little conformal power (the test accepts h0 across a very wide "
+            "range). Treat the bounds as a lower bound on the true interval.",
+            UserWarning,
+            stacklevel=2,
         )
-        >= alpha
-    ]
-
-    if not accepted:
-        return (float("nan"), float("nan"))
-    # min/max recovers the CI only because the two-sided acceptance region is
-    # contiguous (the mean-absolute statistic is convex in h0). On the iid path
-    # Monte-Carlo noise across grid points can perturb the boundary slightly.
+    # min/max recovers the CI because the two-sided acceptance region is
+    # contiguous in practice on exchangeable residuals — this is empirical, not
+    # guaranteed by convexity, since under refit-under-null the residuals
+    # themselves depend on h0 through the refit (so the statistic is not a fixed
+    # convex function of h0). If the accepted set were ever non-contiguous,
+    # min/max would silently fill the interior gap; the boundary-interiority
+    # check above does not detect that. On the iid path Monte-Carlo noise across
+    # grid points can additionally perturb the boundary slightly.
     return (float(min(accepted)), float(max(accepted)))
