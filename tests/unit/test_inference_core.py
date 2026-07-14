@@ -38,6 +38,27 @@ def test_iid_pvalue_reproducible_and_bounded():
     assert 0.0 <= p1 <= 1.0
 
 
+def test_iid_pvalue_all_equal_ties_is_one():
+    # Every permutation ties the observed statistic (count == ns), so the
+    # (1 + count) / (1 + ns) convention gives exactly 1.0.
+    rng = np.random.default_rng(0)
+    resid = np.full(6, 3.0)
+    post = np.array([False, False, False, False, True, True])
+    p = _permutation_pvalue(resid, post, "two-sided", "iid", ns=200, rng=rng)
+    assert p == pytest.approx(1.0)
+
+
+def test_iid_pvalue_respects_plus_one_floor():
+    # The +1 numerator guarantees p >= 1 / (1 + ns) even when no permutation
+    # reaches the observed statistic; a regression to count/ns would break this.
+    rng = np.random.default_rng(1)
+    ns = 50
+    resid = np.array([0.0, 0.0, 0.0, 100.0, 100.0])
+    post = np.array([False, False, False, True, True])
+    p = _permutation_pvalue(resid, post, "two-sided", "iid", ns=ns, rng=rng)
+    assert p >= 1.0 / (1 + ns)
+
+
 def test_iid_requires_rng():
     resid = np.zeros(4)
     post = np.array([False, False, True, True])

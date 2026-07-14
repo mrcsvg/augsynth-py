@@ -31,14 +31,15 @@ PermutationType = Literal["block", "iid"]
 def _post_statistic(
     residuals: NDArray[np.float64],
     post_mask: NDArray[np.bool_],
-    side: str,
+    side: Side,
 ) -> float:
     r"""Compute the CWZ test statistic on the post-window residuals.
 
-    Implements the (unnormalized) test statistic of CWZ 2021, Section 3. The
-    :math:`S_q` normalization constant :math:`1/\sqrt{T_1}` of the paper is
-    identical across permutations and cancels in the p-value ranking, so it is
-    omitted here.
+    Implements the (unnormalized) test statistic of CWZ 2021, §3, Eq. defining
+    :math:`S_q` (the mean-absolute statistic, :math:`q = 1`). The :math:`S_q`
+    normalization constant :math:`1/\sqrt{T_1}` of the paper is identical across
+    permutations and cancels in the p-value ranking, so it is omitted here. The
+    ``"right"`` and ``"left"`` variants use the signed sum for one-sided tests.
 
     Parameters
     ----------
@@ -74,8 +75,8 @@ def _post_statistic(
 def _permutation_pvalue(
     residuals: NDArray[np.float64],
     post_mask: NDArray[np.bool_],
-    side: str,
-    permutation_type: str,
+    side: Side,
+    permutation_type: PermutationType,
     ns: int,
     rng: np.random.Generator | None,
 ) -> float:
@@ -83,8 +84,8 @@ def _permutation_pvalue(
 
     The full residual vector is permuted and the test statistic is recomputed on
     the *fixed* post positions (``post_mask``), then compared to the observed
-    statistic (the statistic on the unpermuted residuals). See CWZ 2021,
-    Section 3.
+    statistic (the statistic on the unpermuted residuals). See CWZ 2021, §3
+    (Eq. defining :math:`S_q` and the permutation p-value).
 
     Two permutation schemes are supported:
 
