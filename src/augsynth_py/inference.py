@@ -250,3 +250,116 @@ def conformal_pvalue(
     post_mask = ~pre_mask
     residuals[post_mask] -= h0
     return _permutation_pvalue(residuals, post_mask, side, permutation_type, ns, rng)
+
+
+def conformal_interval(
+    fit: _FittedSC,
+    *,
+    alpha: float = 0.05,
+    grid_size: int = 100,
+    permutation_type: PermutationType = "block",
+    side: Side = "two-sided",
+    ns: int = 1000,
+    rng: np.random.Generator | None = None,
+) -> tuple[float, float]:
+    r"""Confidence interval for the constant post-period effect by test inversion.
+
+    Builds a :math:`(1 - \alpha)` confidence interval for the constant
+    post-period treatment effect by inverting the conformal test of CWZ 2021,
+    §3: the interval is the *acceptance region* of the test,
+
+    .. math::
+
+        \mathrm{CI}_{1-\alpha} = \{h_0 : p(h_0) \ge \alpha\},
+
+    where :math:`p(h_0)` is :func:`conformal_pvalue` evaluated at the null
+    constant effect :math:`h_0`. Because the p-value is only available
+    pointwise, the acceptance region is approximated on a finite grid and the
+    interval is reported as ``(min, max)`` of the accepted grid points.
+
+    Grid construction
+    -----------------
+    The grid is centred on ``center = mean(post gap) == fit.att_`` and spans
+    ``center ± 6 * sd(post gap)`` (sample standard deviation, ``ddof=1``), with
+    ``grid_size`` equally spaced points. The value ``0.0`` is always unioned in
+    so the sharp null of no effect is evaluated. When the post window has a
+    single period, or the post gaps are degenerate with zero variance,
+    ``sd == 0`` and the span falls back to ``abs(center)`` (or ``1.0`` if
+    ``center`` is also zero), so the grid is never a single point.
+
+    If no grid point is accepted (an empty acceptance region, e.g. an extreme
+    effect with a very fine but narrow grid), ``(nan, nan)`` is returned.
+
+    Parameters
+    ----------
+    fit : _FittedSC
+        A fitted estimator exposing ``gap_``, ``pre_mask_`` and ``att_`` (any
+        :class:`~augsynth_py.synth.classical.Synth` or
+        :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
+    alpha : float, optional
+        Significance level; the interval has nominal coverage :math:`1 - \alpha`.
+        Defaults to ``0.05``.
+    grid_size : int, optional
+        Number of equally spaced grid points before ``0.0`` is unioned in.
+        Defaults to ``100``.
+    permutation_type : {"block", "iid"}, optional
+        Permutation scheme threaded to :func:`conformal_pvalue`. Defaults to
+        ``"block"``.
+    side : {"two-sided", "left", "right"}, optional
+        Direction of the underlying test threaded to :func:`conformal_pvalue`. A
+        proper two-sided confidence interval uses ``"two-sided"`` (the default).
+    ns : int, optional
+        Number of random permutations for ``permutation_type="iid"``; ignored
+        for ``"block"``. Defaults to ``1000``.
+    rng : numpy.random.Generator or None, optional
+        Random generator threaded to :func:`conformal_pvalue`; required for
+        ``permutation_type="iid"``. On the iid path the same generator is
+        consumed sequentially across grid points, which is intentional.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(lower, upper)`` bounds of the confidence interval, or
+        ``(nan, nan)`` if no grid point is accepted.
+
+    Notes
+    -----
+    The sibling ``geolift-py`` package consumes this function to populate
+    ``ConfIntervals(method="conformal")``.
+
+    References
+    ----------
+    Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An Exact and Robust
+    Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
+    116(536), 1849-1864.
+    """
+    gap = np.asarray(fit.gap_, dtype=np.float64)
+    pre_mask = np.asarray(fit.pre_mask_, dtype=np.bool_)
+    post_gap = gap[~pre_mask]
+
+    center = float(np.mean(post_gap))
+    sd = float(np.std(post_gap, ddof=1)) if post_gap.size > 1 else 0.0
+    spread = 6.0 * sd
+    if spread == 0.0:
+        spread = abs(center) if center != 0.0 else 1.0
+
+    grid = np.linspace(center - spread, center + spread, grid_size)
+    grid = np.union1d(grid, [0.0])
+
+    accepted = [
+        float(h0)
+        for h0 in grid
+        if conformal_pvalue(
+            fit,
+            float(h0),
+            permutation_type=permutation_type,
+            side=side,
+            ns=ns,
+            rng=rng,
+        )
+        >= alpha
+    ]
+
+    if not accepted:
+        return (float("nan"), float("nan"))
+    return (float(min(accepted)), float(max(accepted)))
