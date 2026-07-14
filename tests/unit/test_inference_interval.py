@@ -96,12 +96,19 @@ def test_interval_strictly_interior_with_residual_spread():
     # (sd > 0), long enough panel that the block peak p exceeds alpha=0.05, so
     # the inverted interval must be strictly interior to the +/-6*sd grid span
     # rather than pinned to the fallback grid edge.
-    T = 60  # noqa: N806
-    t0 = 50
+    #
+    # The grid is placed from the point-estimate gap_ post-period sd, but each
+    # grid point is scored by the full-window refit (CWZ 2021), whose acceptance
+    # region is wider than the no-refit one. This DGP is tuned so the gap_-based
+    # +/-6*sd span comfortably contains the refit acceptance region (verified:
+    # generous margins on both bounds), keeping the interior check meaningful
+    # under the refit semantics.
+    T = 70  # noqa: N806
+    t0 = 55
     rng = np.random.default_rng(0)
     trend = np.linspace(0.0, 3.0, T)
-    treated = trend + rng.normal(0.0, 0.3, T)
-    treated[t0:] += 1.5
+    treated = trend + rng.normal(0.0, 1.2, T)
+    treated[t0:] += 1.0
     donors = [trend + 1.0, trend - 0.5, np.linspace(0.5, 2.0, T)]
     panel = _panel(treated, donors)
     fit = Synth(fixedeff=False).fit(

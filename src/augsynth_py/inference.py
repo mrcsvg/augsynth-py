@@ -6,9 +6,10 @@ Inference Method for Counterfactual and Synthetic Controls", JASA (hereafter
 CWZ 2021).
 
 The public conformal p-value and confidence-interval surface is built on top of
-the two private helpers defined here in later tasks. This module currently
-implements only the pure permutation-test core: a residual test statistic and a
-permutation p-value with two permutation schemes (moving block and iid).
+the pure permutation-test core (a residual test statistic and a permutation
+p-value with two schemes, moving block and iid) and the estimator's
+full-window refit-under-null hook (``_conformal_null_residuals``), which
+supplies the exchangeable residuals the permutation test operates on.
 
 References
 ----------
@@ -33,23 +34,35 @@ class _FittedSC(Protocol):
 
     Both :class:`augsynth_py.synth.classical.Synth` and
     :class:`augsynth_py.synth.augmented.AugSynth` satisfy this Protocol after
-    ``.fit(...)``. Only the three attributes used by :func:`conformal_pvalue`
-    are declared.
+    ``.fit(...)``.
 
     Attributes
     ----------
     gap_ : NDArray[np.float64]
         Actual minus synthetic outcome over *all* periods, ordered by period.
+        Used only to *place* the confidence-interval grid
+        (:func:`conformal_interval`); the p-value itself does not read it.
     pre_mask_ : NDArray[np.bool_]
         Boolean mask, same length as ``gap_``, True for pre-treatment periods
         (post-treatment periods are ``~pre_mask_``).
     att_ : float
-        Mean post-treatment gap (the point estimate of the ATT).
+        Mean post-treatment gap (the point estimate of the ATT); the CI grid
+        centre.
+
+    Methods
+    -------
+    _conformal_null_residuals(h0)
+        Full-window residuals under the constant-effect null ``h0`` (CWZ 2021),
+        obtained by refitting the synthetic control over the entire window with
+        the treated post-period adjusted by ``h0``. See the estimator method
+        for the exact construction.
     """
 
     gap_: NDArray[np.float64]
     pre_mask_: NDArray[np.bool_]
     att_: float
+
+    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]: ...
 
 
 def _post_statistic(
@@ -188,28 +201,31 @@ def conformal_pvalue(
     over the whole post-treatment window, for an already-fitted
     synthetic-control estimator, via the exact permutation test of CWZ 2021, §3.
 
-    No refit under the null
-    -----------------------
-    In this package the synthetic-control weights are fit on the *pre-period
-    only* (both ``Synth`` and ``AugSynth`` match on ``pre_mask_``). Subtracting a
-    constant post-period effect ``h0`` from the treated post-treatment outcomes
-    leaves every pre-period value untouched, so the counterfactual refit under
-    :math:`H_0` recovers the *same* weights. The residual under :math:`H_0` is
-    therefore available in closed form from the fitted gaps, with no refit:
-
-    .. math::
-
-        u_t = \mathrm{gap}_t              \quad t \in \text{pre-period}
-        u_t = \mathrm{gap}_t - h_0        \quad t \in \text{post-period}
-
-    The residual vector is then handed to the permutation core
+    Refit under the null
+    --------------------
+    CWZ 2021's exactness rests on the full-window residuals being *exchangeable*
+    under :math:`H_0`. To obtain them, the treated unit's post-period outcomes
+    are adjusted by ``h0`` and the synthetic control is **refit over the entire
+    window** (all ``T`` periods), not the pre-period only. This is delegated to
+    the estimator's ``_conformal_null_residuals(h0)`` method (implemented on both
+    :class:`~augsynth_py.synth.classical.Synth` and
+    :class:`~augsynth_py.synth.augmented.AugSynth`); the resulting length-``T``
+    residual vector is handed to the permutation core
     (:func:`_permutation_pvalue`), which recomputes the CWZ test statistic on the
     fixed post positions across the reference permutations.
+
+    This refit is intentional and distinct from the point-estimate path (whose
+    weights are pre-period-anchored): the ATT is a pre-period counterfactual,
+    whereas the conformal residual is CWZ's full-window exchangeability
+    construct. It matches R ``augsynth``'s conformal inference exactly on the
+    ``GeoLift_PreTest`` fixture (see
+    ``tests/validation_against_r/test_conformal.py``).
 
     Parameters
     ----------
     fit : _FittedSC
-        A fitted estimator exposing ``gap_``, ``pre_mask_`` and ``att_`` (any
+        A fitted estimator exposing ``pre_mask_``, ``att_`` and the
+        ``_conformal_null_residuals`` method (any
         :class:`~augsynth_py.synth.classical.Synth` or
         :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
     h0 : float, optional
@@ -245,10 +261,8 @@ def conformal_pvalue(
     Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
     116(536), 1849-1864.
     """
-    residuals = np.asarray(fit.gap_, dtype=np.float64).copy()
-    pre_mask = np.asarray(fit.pre_mask_, dtype=np.bool_)
-    post_mask = ~pre_mask
-    residuals[post_mask] -= h0
+    residuals = np.asarray(fit._conformal_null_residuals(h0), dtype=np.float64)
+    post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
     return _permutation_pvalue(residuals, post_mask, side, permutation_type, ns, rng)
 
 
@@ -296,9 +310,12 @@ def conformal_interval(
     Parameters
     ----------
     fit : _FittedSC
-        A fitted estimator exposing ``gap_``, ``pre_mask_`` and ``att_`` (any
+        A fitted estimator exposing ``gap_``, ``pre_mask_``, ``att_`` and the
+        ``_conformal_null_residuals`` method (any
         :class:`~augsynth_py.synth.classical.Synth` or
-        :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
+        :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``). ``gap_``
+        and ``att_`` place the grid; each grid point is scored by refitting via
+        :func:`conformal_pvalue`.
     alpha : float, optional
         Significance level; the interval has nominal coverage :math:`1 - \alpha`.
         Defaults to ``0.05``.

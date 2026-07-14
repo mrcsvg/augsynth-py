@@ -27,9 +27,13 @@ def _panel(treated_series, donor_series):
 
 
 def test_perfect_fit_zero_effect_pvalue_is_one():
-    # Treated equals a donor everywhere -> gaps ~0 -> every shift equal -> p=1.
+    # Treated equals its donors everywhere -> the full-window refit under H0=0
+    # reproduces the treated exactly (residual == 0 for any simplex split, since
+    # both donors equal the treated), so every cyclic shift ties and p == 1.
+    # Two identical donors make the zero residual exact regardless of the
+    # solver's weight split, avoiding tie-breaking on solver noise.
     base = np.linspace(1.0, 2.0, 10)
-    panel = _panel(base, [base, base + 5.0])
+    panel = _panel(base, [base, base])
     fit = Synth(fixedeff=False).fit(
         panel,
         unit="unit",
@@ -116,7 +120,10 @@ def test_iid_path_reproducible_via_rng():
     assert p1 == p2
 
 
-def test_conformal_pvalue_does_not_mutate_gap():
+def test_conformal_pvalue_does_not_mutate_fitted_state():
+    # The refit-under-null path copies the stored outcome matrix before applying
+    # the h0 adjustment, so neither gap_ nor the private full-window matrix that
+    # feeds the refit may change after a call.
     base = np.linspace(1.0, 2.0, 12)
     treated = base.copy()
     treated[8:] += 2.0
@@ -129,6 +136,8 @@ def test_conformal_pvalue_does_not_mutate_gap():
         treated="trt",
         treatment_time=8,
     )
-    snapshot = fit.gap_.copy()
+    gap_snapshot = fit.gap_.copy()
+    matrix_snapshot = fit._y_matrix.copy()
     conformal_pvalue(fit, 5.0)
-    np.testing.assert_array_equal(fit.gap_, snapshot)
+    np.testing.assert_array_equal(fit.gap_, gap_snapshot)
+    np.testing.assert_array_equal(fit._y_matrix, matrix_snapshot)
