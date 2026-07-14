@@ -7,6 +7,7 @@ set of null effects ``h0`` that the conformal test fails to reject at level
 
 import numpy as np
 import polars as pl
+import pytest
 
 from augsynth_py.inference import conformal_interval
 from augsynth_py.synth.classical import Synth
@@ -80,3 +81,46 @@ def test_wider_interval_contains_zero_for_small_effect():
     fit = _fit_with_effect(0.0)
     lo, hi = conformal_interval(fit, alpha=0.05, grid_size=81)
     assert lo <= 0.0 <= hi
+
+
+@pytest.mark.parametrize("bad_side", ["right", "left"])
+def test_conformal_interval_rejects_one_sided(bad_side):
+    # A one-sided acceptance region is a half-line, not an interval.
+    fit = _fit_with_effect(2.0)
+    with pytest.raises(ValueError):
+        conformal_interval(fit, alpha=0.05, grid_size=41, side=bad_side)
+
+
+def test_interval_strictly_interior_with_residual_spread():
+    # Non-degenerate regime: imperfect pre-fit -> post gaps have real variance
+    # (sd > 0), long enough panel that the block peak p exceeds alpha=0.05, so
+    # the inverted interval must be strictly interior to the +/-6*sd grid span
+    # rather than pinned to the fallback grid edge.
+    T = 60  # noqa: N806
+    t0 = 50
+    rng = np.random.default_rng(0)
+    trend = np.linspace(0.0, 3.0, T)
+    treated = trend + rng.normal(0.0, 0.3, T)
+    treated[t0:] += 1.5
+    donors = [trend + 1.0, trend - 0.5, np.linspace(0.5, 2.0, T)]
+    panel = _panel(treated, donors)
+    fit = Synth(fixedeff=False).fit(
+        panel,
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="trt",
+        treatment_time=t0,
+    )
+
+    post_gap = fit.gap_[~fit.pre_mask_]
+    sd = float(np.std(post_gap, ddof=1))
+    center = float(fit.att_)
+    spread = 6.0 * sd
+    assert sd > 0.0  # genuine residual spread, not a degenerate perfect fit
+
+    lo, hi = conformal_interval(fit, alpha=0.05, grid_size=201)
+    assert np.isfinite(lo) and np.isfinite(hi)
+    assert lo < hi
+    assert center - spread < lo
+    assert hi < center + spread

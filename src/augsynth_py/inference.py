@@ -277,6 +277,12 @@ def conformal_interval(
     pointwise, the acceptance region is approximated on a finite grid and the
     interval is reported as ``(min, max)`` of the accepted grid points.
 
+    Only the two-sided test can be inverted into a confidence interval: the
+    acceptance region of a one-sided statistic is a half-line, not a bounded
+    interval, so a finite ``(min, max)`` over the grid would be a meaningless
+    grid-edge artifact. ``side`` must therefore be ``"two-sided"`` (the
+    default); use :func:`conformal_pvalue` directly for one-sided testing.
+
     Grid construction
     -----------------
     The grid is centred on ``center = mean(post gap) == fit.att_`` and spans
@@ -286,9 +292,6 @@ def conformal_interval(
     single period, or the post gaps are degenerate with zero variance,
     ``sd == 0`` and the span falls back to ``abs(center)`` (or ``1.0`` if
     ``center`` is also zero), so the grid is never a single point.
-
-    If no grid point is accepted (an empty acceptance region, e.g. an extreme
-    effect with a very fine but narrow grid), ``(nan, nan)`` is returned.
 
     Parameters
     ----------
@@ -305,9 +308,10 @@ def conformal_interval(
     permutation_type : {"block", "iid"}, optional
         Permutation scheme threaded to :func:`conformal_pvalue`. Defaults to
         ``"block"``.
-    side : {"two-sided", "left", "right"}, optional
-        Direction of the underlying test threaded to :func:`conformal_pvalue`. A
-        proper two-sided confidence interval uses ``"two-sided"`` (the default).
+    side : {"two-sided"}, optional
+        Kept in the signature to make the two-sided requirement explicit. Only
+        ``"two-sided"`` (the default) is accepted; any other value raises
+        ``ValueError`` because a one-sided acceptance region is unbounded.
     ns : int, optional
         Number of random permutations for ``permutation_type="iid"``; ignored
         for ``"block"``. Defaults to ``1000``.
@@ -320,10 +324,27 @@ def conformal_interval(
     -------
     tuple[float, float]
         ``(lower, upper)`` bounds of the confidence interval, or
-        ``(nan, nan)`` if no grid point is accepted.
+        ``(nan, nan)`` if no grid point is accepted (an empty acceptance
+        region). Refining or widening the grid does *not* recover a non-empty
+        interval in that case; the two causes are structural:
+
+        (a) The attainable peak p-value over ``h0`` is below ``alpha``. Under
+        the block scheme the p-value is a multiple of ``1/T`` (``T`` = total
+        periods) and peaks at :math:`\approx 1/T`, so a :math:`(1-\alpha)` CI
+        needs roughly ``T >= 1/alpha`` periods; e.g. a 95% CI needs
+        ``T >= 20``. Below that threshold the entire grid is rejected no matter
+        how fine or wide it is.
+
+        (b) Residual non-exchangeability (e.g. trending or heteroskedastic
+        gaps) can depress the peak p-value below ``alpha`` even when ``T`` is
+        adequate, again emptying the acceptance region.
 
     Notes
     -----
+    The reported bounds are the innermost accepted grid points, so each bound is
+    accurate only to about one grid spacing, ``2 * spread / (grid_size - 1)``;
+    increasing ``grid_size`` tightens this resolution.
+
     The sibling ``geolift-py`` package consumes this function to populate
     ``ConfIntervals(method="conformal")``.
 
@@ -333,6 +354,13 @@ def conformal_interval(
     Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
     116(536), 1849-1864.
     """
+    if side != "two-sided":
+        raise ValueError(
+            "conformal_interval inverts the two-sided conformal test; one-sided "
+            "intervals are not supported. Use conformal_pvalue(..., side=...) for "
+            "one-sided testing."
+        )
+
     gap = np.asarray(fit.gap_, dtype=np.float64)
     pre_mask = np.asarray(fit.pre_mask_, dtype=np.bool_)
     post_gap = gap[~pre_mask]
@@ -362,4 +390,7 @@ def conformal_interval(
 
     if not accepted:
         return (float("nan"), float("nan"))
+    # min/max recovers the CI only because the two-sided acceptance region is
+    # contiguous (the mean-absolute statistic is convex in h0). On the iid path
+    # Monte-Carlo noise across grid points can perturb the boundary slightly.
     return (float(min(accepted)), float(max(accepted)))
