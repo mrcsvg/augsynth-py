@@ -310,16 +310,154 @@ Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1),
 
 ---
 
-## 5. Conformal inference for synthetic controls (Chernozhukov, Wuthrich & Zhu, 2021)
+## 5. Conformal inference for synthetic controls (Chernozhukov, Wüthrich & Zhu, 2021)
 
-**Paper:** Chernozhukov, V., Wuthrich, K., & Zhu, Y. (2021). An Exact and
+**Paper:** Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An Exact and
 Robust Conformal Inference Method for Counterfactual and Synthetic Controls.
-*Journal of the American Statistical Association*, 116(536), 1849–1864.
+*Journal of the American Statistical Association*, 116(536), 1849–1864
+(hereafter CWZ 2021).
 
-**Code location:** `src/augsynth_py/inference/conformal.py` *(not yet implemented)*
+**Code location:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
+— public functions `conformal_pvalue` and `conformal_interval`, built on the
+private permutation core (`_post_statistic`, `_permutation_pvalue`) and the
+estimator hook `_conformal_null_residuals` on both `Synth` (§1) and `AugSynth`
+(§2). Neither function is a new estimator: both operate on an already-fitted
+`Synth` or `AugSynth`.
 
-**Method.** Provides finite-sample valid p-values for the null of no
-treatment effect by permuting residuals across the pre-period.
+**Estimator surface.** Two functions operating on any fitted estimator:
+
+- `conformal_pvalue(fit, h0=0.0, *, permutation_type="block", side="two-sided",
+  ns=1000, rng=None) -> float` — the conformal p-value for the null of a
+  **constant** post-period effect equal to `h0`.
+- `conformal_interval(fit, *, alpha=0.05, grid_size=100, permutation_type="block",
+  side="two-sided", ns=1000, rng=None) -> tuple[float, float]` — a
+  $(1-\alpha)$ confidence interval for that constant effect, by test inversion.
+
+### 5.1 Refit-under-null residual construction
+
+CWZ 2021 (§3) tests $H_0$: the post-treatment effect is constant and equal to
+$h_0$. The test is exact because, under $H_0$, the full-window residuals are
+**exchangeable**. To realize that exchangeability the treated unit's
+post-period outcomes are adjusted by $h_0$,
+
+$$
+\tilde y_{1,t} \;=\;
+\begin{cases}
+y_{1,t} & t \in \text{pre}, \\
+y_{1,t} - h_0 & t \in \text{post},
+\end{cases}
+$$
+
+and the synthetic control is **refit over the entire window** — all $T$
+periods, not the pre-period only (for `fixedeff` the demeaning is likewise taken
+over the full $h_0$-adjusted window). The residual handed to the permutation
+core is the full-length $T$-vector $\hat u_t = \tilde y_{1,t} - \hat y_{1,t}(0)$
+from that refit. This is the `_conformal_null_residuals(h0)` hook on each
+estimator.
+
+The full-window refit is the load-bearing step: only a control fit on the
+$h_0$-adjusted *full* window makes the pre- and post-period residuals draws from
+a common law, which is what CWZ 2021 §3 requires for the permutation
+distribution to be valid in finite samples. Refitting on the pre-period alone
+and reusing those weights out-of-sample leaves post-period residuals with a
+different distribution than the pre-period ones, breaking exchangeability.
+
+**The point estimate stays pre-period-fit; only inference refits.** The reported
+`att_` / `gap_` / `synthetic_` come from the pre-period counterfactual (§1, §2)
+and are *not* recomputed here — the ATT is a pre-period-anchored quantity. The
+refit-under-null is exclusively an inference construct: it produces exchangeable
+residuals for the permutation test and never touches the point estimate.
+
+> **Note (rejected shortcut).** An initial "no-refit" approximation — reuse the
+> pre-period weights and set the post-period residual to $\text{gap}_t - h_0$ —
+> was implemented first and **rejected**. Those residuals are not exchangeable
+> (the pre-period residuals are in-sample, the post-period ones are not), and the
+> resulting p-values did **not** match R `augsynth`. Do not reintroduce it as the
+> default. (A no-refit *fast approximation* is a possible future opt-in for the
+> `geolift-py` simulation loop, never the exact path.)
+
+### 5.2 Test statistic and permutation schemes
+
+On the full-window residual vector $\hat u$, the CWZ test statistic is evaluated
+on the **fixed post positions** (`_post_statistic`):
+
+$$
+S(\hat u) \;=\;
+\begin{cases}
+\sum_{t \in \text{post}} |\hat u_t| & \text{`side="two-sided"`}, \\
+\sum_{t \in \text{post}} \hat u_t & \text{`side="right"`}, \\
+-\sum_{t \in \text{post}} \hat u_t & \text{`side="left"`}.
+\end{cases}
+$$
+
+CWZ's $1/\sqrt{T_1}$ normalization is constant across permutations, so it
+cancels in the rank and is omitted. Two permutation schemes produce the p-value:
+
+- **`block`** (default, deterministic): the reference set is the $T$ cyclic
+  shifts $\texttt{np.roll}(\hat u, j)$, $j = 0, \dots, T-1$, with the statistic
+  re-read on the fixed post positions. Since the observed statistic ($j=0$) is
+  always in the set, $p = \#\{j : S_j \ge S_\text{obs}\}\,/\,T$. This is the
+  moving-block scheme of CWZ 2021 §3. **Granularity floor:** $p$ is a multiple
+  of $1/T$ and peaks near $1/T$, so a $(1-\alpha)$ CI is only feasible when
+  $T \gtrsim 1/\alpha$ (e.g. a 95% interval needs $T \ge 20$ total periods).
+- **`iid`**: `ns` random permutations drawn from `rng`, with the
+  finite-sample-valid convention
+  $p = \bigl(1 + \#\{S_\text{perm} \ge S_\text{obs}\}\bigr)\,/\,(1 + ns)$.
+  Requires a non-`None` `rng`.
+
+### 5.3 Confidence interval by test inversion
+
+`conformal_interval` inverts the two-sided test: the $(1-\alpha)$ interval is
+the acceptance region
+
+$$
+\mathrm{CI}_{1-\alpha} \;=\; \{\, h_0 : \texttt{conformal\_pvalue}(fit, h_0) \ge \alpha \,\},
+$$
+
+approximated on a finite grid centred at `att_` and spanning
+$\pm 6\,\mathrm{sd}(\text{post gap})$ (with `0.0` always unioned in so the sharp
+null is scored). Each grid point is a **separate refit-under-null**, so a CI
+costs roughly `grid_size` refits. Only the **two-sided** test can be inverted
+into a bounded interval — a one-sided acceptance region is a half-line, so any
+other `side` raises `ValueError`.
+
+**Auto-expansion / truncation guard.** The span is seeded from the
+*point-estimate* gap dispersion, but each point is scored by the *full-window
+refit* acceptance region, a different and often wider quantity (tight donors give
+a small `sd`, yet a low-power conformal test accepts a broad range of $h_0$). If
+an accepted endpoint reaches a grid boundary the span is doubled (centre,
+`grid_size` and the unioned `0.0` preserved) and re-scored, up to 8 doublings.
+If truncation persists at the cap a `UserWarning` is emitted and the widest
+computed bounds are returned as a lower bound on the true interval. This is
+distinct from an **empty** acceptance region (peak p-value below $\alpha$, e.g.
+$T < 1/\alpha$ under `block`), which returns `(nan, nan)` and which widening
+cannot fix.
+
+### 5.4 Validation
+
+Parity is pinned in
+[`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py):
+
+- **`block` p-value — exact.** Matches R `augsynth`'s conformal inference
+  **exactly** at multiple $h_0$, for both `Synth` (`progfunc='None'`) and
+  `AugSynth` (`progfunc='Ridge'`) on `GeoLift_PreTest`. The refit-under-null is
+  what makes this hold; the rejected no-refit shortcut did not.
+- **`iid` p-value — statistical.** Agrees with the `block` value within
+  Monte-Carlo tolerance for a fixed `rng`.
+- **Confidence interval — transitive.** R `augsynth` exposes no *aggregate*
+  conformal CI (only per-period intervals), so there is no direct oracle for
+  `conformal_interval`. It is validated transitively: the interval is pure test
+  inversion over `conformal_pvalue`, and $p(h_0)$ matches R exactly at every
+  tested $h_0$, so the inverted region is correct by construction.
+
+### 5.5 Cost note for `geolift-py`
+
+Because inference now refits the synthetic control once per $h_0$ (≈ `grid_size`
+refits per CI), conformal inference is **no longer cheap**. The earlier
+`geolift-py` simulation fast-path assumption that conformal inference reuses the
+pre-period fit (no refit) is **void**. A no-refit fast approximation remains a
+possible future opt-in for the power-simulation loop, but it is not the default
+and is not the exact CWZ path.
 
 ---
 
