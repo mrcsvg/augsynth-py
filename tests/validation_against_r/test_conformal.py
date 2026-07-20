@@ -44,6 +44,7 @@ transitively: the interval is the test-inversion acceptance region of the same
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -316,4 +317,123 @@ def test_augsynth_block_pvalue_matches_r_exact(
         r_conformal_env, agg="agg2", res="res2", post_len="pln2", h0=h0, perm_type="block", ns=1000
     )
     py_p = conformal_pvalue(augsynth_fit, h0, permutation_type="block", side="two-sided")
+    assert py_p == pytest.approx(r_p, abs=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# 6. Basque panel (Abadie & Gardeazabal 2003): p(h0) curve -- deterministic,
+#    EXACT. Second fixture, decoupled from GeoLift_PreTest; pins the strongly
+#    asymmetric acceptance region investigated as known-issue I-1.
+# ---------------------------------------------------------------------------
+
+BASQUE_CSV = (
+    Path(__file__).resolve().parents[2] / "notebooks" / "_data" / "basque_ag2003.csv"
+).as_posix()
+BASQUE_TREATED = "Basque Country (Pais Vasco)"
+BASQUE_TREATMENT_YEAR = 1975
+
+# h0 probes spanning the full structure of the Basque p(h0) curve: both 1/T
+# floors (-5, +10), the sharp left cliff (-3.75 -> -3.0), the REJECTED gap at
+# the point estimate (-0.5, p = 1/43 < alpha: the acceptance region is
+# non-contiguous and contains att_ ~ -0.69 only via min/max bridging) with its
+# accepted flank (-0.75, p = 3/43), the sharp null (0), the broad right
+# plateau (+3.0), its peak (+4.5, p = 36/43 -- far from att_), and the right
+# decay (+7.5). Exact agreement across these pins the whole acceptance region
+# {h0 : p(h0) >= alpha}, i.e. the markedly asymmetric conformal interval of
+# I-1, as a property of the method shared with R rather than an artifact.
+BASQUE_H0_PROBES = [-5.0, -3.75, -3.0, -0.75, -0.5, 0.0, 3.0, 4.5, 7.5, 10.0]
+
+
+@pytest.fixture(scope="module")
+def basque_panel() -> pl.DataFrame:
+    """AG 2003 Basque panel (17 regions x 43 years), Spain aggregate dropped."""
+    return pl.read_csv(BASQUE_CSV).filter(pl.col("regionname") != "Spain (Espana)")
+
+
+@pytest.fixture(scope="module")
+def basque_synth_fit(basque_panel: pl.DataFrame) -> Synth:
+    """Python classical SCM on the Basque panel, no fixed effects (as in I-1)."""
+    return Synth(fixedeff=False).fit(
+        basque_panel,
+        unit="regionname",
+        time="year",
+        outcome="gdpcap",
+        treated=BASQUE_TREATED,
+        treatment_time=BASQUE_TREATMENT_YEAR,
+    )
+
+
+@pytest.fixture(scope="module")
+def r_basque_conformal_env(r_session: Any) -> Any:
+    """R oracle on the Basque panel: aggregate-conformal setup, fixedeff=FALSE.
+
+    Same ``cbind(X, y)`` + dummy-``y`` reshape as ``r_conformal_env``, but built
+    from the in-repo Basque CSV so it needs only the ``augsynth`` R package (not
+    ``GeoLift``). Exposes ``res_bq`` / ``agg_bq`` / ``plb`` in the R global env.
+    """
+    r_session("suppressPackageStartupMessages(library(augsynth))")
+    r_session(
+        f"""
+        bq <- read.csv('{BASQUE_CSV}')
+        bq <- bq[bq$regionname != 'Spain (Espana)', ]
+        bq$treat <- as.integer(
+            bq$regionname == '{BASQUE_TREATED}' & bq$year >= {BASQUE_TREATMENT_YEAR}
+        )
+
+        res_bq <- augsynth(
+            gdpcap ~ treat, unit = regionname, time = year, data = bq,
+            progfunc = 'None', scm = TRUE, fixedeff = FALSE
+        )
+        wide_bq <- res_bq$data
+        agg_bq <- wide_bq
+        agg_bq$X <- cbind(wide_bq$X, wide_bq$y)
+        agg_bq$y <- matrix(1, nrow = nrow(wide_bq$X), ncol = 1)
+        plb <- ncol(wide_bq$y)
+        """
+    )
+    return r_session
+
+
+@pytest.mark.requires_r_pkg("augsynth")
+@pytest.mark.parametrize("h0", BASQUE_H0_PROBES)
+def test_basque_pvalue_curve_matches_r_exact(
+    r_basque_conformal_env: Any,
+    basque_synth_fit: Synth,
+    h0: float,
+) -> None:
+    """The Basque p(h0) curve equals R's pointwise, including its asymmetry.
+
+    Resolves known-issue I-1: the 95% interval (-3.22, 7.69) around
+    ``att_ = -0.69`` is skewed strongly positive because p(h0) itself is
+    asymmetric — it peaks near h0 = +4.5, not at ``att_``, and collapses to the
+    1/T floor already at h0 = -3.75 on the left. The acceptance region is even
+    non-contiguous: p(h0) = 1/43 < 0.05 for h0 in roughly [-0.70, -0.35] — a
+    rejected gap containing ``att_`` itself, identical in R, which the
+    interval's min/max extraction bridges (audit D-6). A full 89-point sweep
+    over h0 in [-12, 16] matched R with max |p_py - p_r| = 4.4e-16 (one ulp);
+    this test pins the probes that define that shape. The mechanism is the
+    full-window refit against a donor pool whose convex hull cannot reach the
+    treated series from below: raising the treated post-period (negative h0)
+    concentrates residual mass in the post window (share 0.79-0.96 of total),
+    while lowering it (positive h0) lets the refit spread misfit across the
+    whole window (share ~ 0.48), so post-window block sums rank as
+    unexceptional among the cyclic shifts and p stays high. Near att_ the
+    refit zeroes the pre-window residuals while the post window keeps genuine
+    dispersion, so the post block ranks first among all shifts — the local
+    exchangeability failure that produces the rejected gap at the truth.
+    """
+    r_p = _r_conformal_pval(
+        r_basque_conformal_env,
+        agg="agg_bq",
+        res="res_bq",
+        post_len="plb",
+        h0=h0,
+        perm_type="block",
+        ns=1000,
+    )
+    py_p = conformal_pvalue(basque_synth_fit, h0, permutation_type="block", side="two-sided")
+    # Same rationale as test_block_pvalue_h0_zero_matches_r_exact: the block
+    # p-value is an integer count over T = 43 cyclic shifts; the smallest gap
+    # between distinct shift statistics on this fixture dwarfs solver noise, so
+    # the counts are identical and agreement is float-exact.
     assert py_p == pytest.approx(r_p, abs=1e-8)
