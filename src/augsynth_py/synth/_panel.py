@@ -8,6 +8,7 @@ augmented variant.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -31,6 +32,16 @@ def long_to_wide(
 ) -> tuple[NDArray[np.float64], list[str], NDArray[Any], int]:
     """Reshape a long panel into a ``(T, N)`` outcome matrix.
 
+    ``treated`` may be a single unit value or a sequence of unit values. When a
+    sequence is given, the treated units are collapsed into a single column at
+    index 0 holding their elementwise mean (the treated *group* trajectory),
+    and they are removed from the donor pool. Per R ``augsynth`` semantics for a
+    block treatment with a single intervention time, this pooled-mean series is
+    the fit target. Collapsing here (before any fixed-effect demeaning) is
+    identical to demeaning each treated unit and then averaging: pre-period
+    demeaning is a linear map applied identically to each column, so it
+    distributes over the cross-column average.
+
     Parameters
     ----------
     panel
@@ -38,30 +49,36 @@ def long_to_wide(
     unit, time, outcome
         Column names.
     treated
-        Value in the ``unit`` column identifying the treated unit.
+        Value in the ``unit`` column identifying the treated unit, or a
+        sequence of such values identifying the treated group.
 
     Returns
     -------
     Y
         ``(T, N)`` outcome matrix with rows sorted ascending by ``time`` and the
-        treated unit's column placed at index ``treated_idx``.
+        treated column placed at index ``treated_idx`` (always 0). For a
+        sequence ``treated``, column 0 is the elementwise mean of the treated
+        units.
     units
-        Length-``N`` list of unit names in the column order of ``Y``. The treated
-        unit is always at position ``treated_idx`` (returned separately).
+        Length-``N`` list of unit names in the column order of ``Y``. The
+        treated column is always at position ``treated_idx``; for a sequence
+        ``treated``, ``units[0]`` is the comma-joined label of the treated
+        group, sorted by string representation (so ``[2, 10]`` labels as
+        ``"10,2"``).
     periods
         Length-``T`` 1-D array of the ``time`` values in row order.
     treated_idx
-        Column index of the treated unit in ``Y``.
+        Column index of the treated column in ``Y`` (always 0).
 
     Raises
     ------
     ValueError
-        If a required column is missing, or any ``(unit, time)`` pair is
-        missing / duplicated (unbalanced panel).
+        If a required column is missing, ``treated`` is an empty sequence, or
+        any ``(unit, time)`` pair is missing / duplicated (unbalanced panel).
     TreatedUnitNotFoundError
-        If ``treated`` does not appear in the ``unit`` column.
+        If any treated value does not appear in the ``unit`` column.
     EmptyDonorPoolError
-        If the panel contains only the treated unit.
+        If no donor units remain after removing the treated unit(s).
     """
     missing = {unit, time, outcome} - set(panel.columns)
     if missing:
@@ -69,17 +86,31 @@ def long_to_wide(
             f"Panel is missing required column(s): {sorted(missing)}. Have columns: {panel.columns}"
         )
 
+    # Normalize `treated` to a list of one or more unit values. A bare str/bytes
+    # is a scalar, not a sequence of characters; any other iterable (list, tuple,
+    # set, np.ndarray, pl.Series, ...) is a sequence of unit values.
+    if isinstance(treated, (str, bytes)):
+        treated_list = [treated]
+    elif isinstance(treated, Iterable):
+        treated_list = sorted(set(treated), key=str)
+    else:
+        treated_list = [treated]
+    if not treated_list:
+        raise ValueError("`treated` must name at least one unit.")
+
     all_units = panel[unit].unique().sort().to_list()
-    if treated not in all_units:
+    unknown = [t for t in treated_list if t not in all_units]
+    if unknown:
         raise TreatedUnitNotFoundError(
-            f"Treated unit {treated!r} not found in column {unit!r}. "
+            f"Treated unit(s) {unknown!r} not found in column {unit!r}. "
             f"Sample of values present: {all_units[:5]}"
         )
 
-    donors = [u for u in all_units if u != treated]
+    treated_set = set(treated_list)
+    donors = [u for u in all_units if u not in treated_set]
     if not donors:
         raise EmptyDonorPoolError(
-            f"Panel has only the treated unit {treated!r}; no donors to fit against."
+            f"Panel has only treated unit(s) {treated_list!r}; no donors to fit against."
         )
 
     wide = panel.pivot(
@@ -95,12 +126,78 @@ def long_to_wide(
             "Synthetic control requires a balanced panel."
         )
 
-    ordered_units = [str(treated)] + [str(d) for d in donors]
-    treated_idx = 0
-    y_matrix = wide.select(ordered_units).to_numpy().astype(np.float64)
+    donor_names = [str(d) for d in donors]
+    treated_names = [str(t) for t in treated_list]
+    donor_matrix = wide.select(donor_names).to_numpy().astype(np.float64)
+    treated_matrix = wide.select(treated_names).to_numpy().astype(np.float64)
+    treated_col = treated_matrix.mean(axis=1, keepdims=True)  # (T, 1) group mean
+
+    ordered_units = [",".join(treated_names), *donor_names]
+    y_matrix = np.concatenate([treated_col, donor_matrix], axis=1)
     periods = wide[time].to_numpy()
+    treated_idx = 0
 
     return y_matrix, ordered_units, periods, treated_idx
+
+
+def imbalance(
+    y1_pre: NDArray[np.float64],
+    y0_pre: NDArray[np.float64],
+    weights: NDArray[np.float64],
+) -> tuple[float, float]:
+    r"""Pre-period L2 imbalance and its uniform-weight-scaled version.
+
+    This is the pre-treatment fit / imbalance quantity of Ben-Michael, Feller
+    & Rothstein (2021), §3, as reported by the R ``augsynth`` package (the
+    parity oracle, not the definitional source):
+
+    .. math::
+
+        \text{l2} = \lVert y_{1,\text{pre}} - Y_{0,\text{pre}} w \rVert_2, \quad
+        \text{scaled} = \frac{\text{l2}}{\lVert y_{1,\text{pre}}
+        - Y_{0,\text{pre}} w_{\text{unif}} \rVert_2},
+
+    with :math:`w_{\text{unif}} = \mathbf{1}/J`. The scaled version is a ratio
+    and is therefore invariant to any constant normalization of the norm.
+
+    When the uniform baseline fits ``y1_pre`` exactly (denominator 0), the
+    scaled value follows the IEEE convention that unguarded R division
+    produces: ``inf`` if the fitted imbalance is positive, ``nan`` if both
+    numerator and denominator are zero (0/0). Assumes ``J >= 1``; callers are
+    gated by :func:`long_to_wide`, which raises
+    :class:`~augsynth_py.exceptions.EmptyDonorPoolError` for an empty donor
+    pool.
+
+    Parameters
+    ----------
+    y1_pre
+        Treated pre-period vector, shape ``(T0,)``. Caller supplies the same
+        (demeaned) space the weights were fit in.
+    y0_pre
+        Donor pre-period matrix, shape ``(T0, J)``.
+    weights
+        Length-``J`` fitted weight vector.
+
+    Returns
+    -------
+    l2_imbalance : float
+        L2 norm of the pre-period residual under the fitted weights.
+    scaled_l2_imbalance : float
+        ``l2_imbalance`` divided by the L2 imbalance of uniform ``1/J``
+        weights; ``inf`` or ``nan`` per the zero-denominator convention above.
+    """
+    n_donors = y0_pre.shape[1]
+    resid = y1_pre - y0_pre @ weights
+    l2 = float(np.linalg.norm(resid))
+    resid_unif = y1_pre - y0_pre @ np.full(n_donors, 1.0 / n_donors)
+    denom = float(np.linalg.norm(resid_unif))
+    if denom > 0:
+        scaled = l2 / denom
+    elif l2 > 0:
+        scaled = float("inf")
+    else:
+        scaled = float("nan")
+    return l2, scaled
 
 
 def pre_period_mask(

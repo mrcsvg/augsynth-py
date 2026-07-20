@@ -32,6 +32,7 @@ from numpy.typing import NDArray
 
 from augsynth_py.synth._panel import (
     apply_unit_fixedeff,
+    imbalance,
     long_to_wide,
     pre_period_mask,
 )
@@ -218,6 +219,11 @@ def _fit_at_lambda(
     Private. The public ``AugSynth`` class (M3) will wrap this together with
     the LOO-CV layer from M2 and the input-validation surface from D7. Use
     this function only from tests and from M2/M3.
+
+    ``treated`` may be a unit value or an iterable of unit values, with the
+    same treated-group semantics as :meth:`Synth.fit` (see there for the
+    full documentation); for an iterable, the ``actual``, ``synthetic``,
+    and ``gap`` fields of the result refer to the treated-group mean.
 
     The flow:
 
@@ -497,11 +503,31 @@ class AugSynth:
         SCM-only counterfactual (before ridge correction).
     ridge_correction_ : numpy.ndarray
         ``synthetic_ - synthetic_scm_``.
+    l2_imbalance_ : float
+        Pre-period L2 imbalance, computed in the period-demeaned pre-period
+        fit space (where :math:`\omega` and :math:`\gamma` are solved) with
+        the effective weights :math:`\omega + \gamma`, so it reflects the
+        augmented fit rather than the pure SCM one. See
+        :func:`augsynth_py.synth._panel.imbalance`.
+    scaled_l2_imbalance_ : float
+        ``l2_imbalance_`` divided by the L2 imbalance of uniform ``1/J``
+        donor weights in the same space. Same IEEE zero-denominator
+        convention as ``Synth`` (``inf`` when the fitted imbalance is
+        positive, ``nan`` for 0/0); see
+        :func:`augsynth_py.synth._panel.imbalance`.
     units_, periods_, actual_, synthetic_, gap_, att_, att_pct_,
     rmspe_pre_, pre_mask_, treated_, treatment_time_
         Mirror the corresponding ``Synth`` attributes; ``synthetic_``,
         ``gap_``, ``att_``, ``att_pct_``, ``rmspe_pre_`` refer to the
-        augmented counterfactual rather than the pure SCM one.
+        augmented counterfactual rather than the pure SCM one. As on
+        ``Synth``, for a multi-treated fit (``treated`` passed as an
+        iterable) ``units_[0]`` is the comma-joined group label rather than
+        a single panel unit name, and ``att_`` / ``att_pct_`` refer to the
+        treated-group *mean*: for flow outcomes (where summing across units
+        and periods is meaningful, e.g. sales or conversions), the total
+        incremental effect is ``att_ * n_treated * n_post_periods``
+        (downstream consumers such as geolift-py do this multiplication —
+        do not double-count).
     """
 
     def __init__(
@@ -527,8 +553,12 @@ class AugSynth:
     ) -> AugSynth:
         """Fit AugSynth on a long-format panel.
 
-        Parameters mirror :meth:`Synth.fit` exactly. See the class
-        docstring for the attribute surface populated by this call.
+        Parameters mirror :meth:`Synth.fit`, including the ``treated``
+        semantics: a unit value, or an iterable of unit values designating a
+        treated *group* that is collapsed to its elementwise mean and
+        excluded from the donor pool. See :meth:`Synth.fit` for the full
+        parameter documentation and the class docstring for the attribute
+        surface populated by this call.
 
         Returns
         -------
@@ -599,6 +629,19 @@ class AugSynth:
         effective = omega + gamma
         weights = {name: float(w) for name, w in zip(donor_names, effective, strict=True)}
 
+        # Imbalance is computed in the period-demeaned pre-period fit space
+        # with the effective weights (omega + gamma), so it reflects the
+        # augmented fit. The space choice is immaterial: with lambda > 0 and
+        # period demeaning, gamma sums to exactly 0 (and omega sums to 1), so
+        # the residual — and hence both imbalance values — is identical in
+        # period-demeaned and raw unit-demeaned space. The only genuinely open
+        # question was the weights choice (effective omega + gamma vs SCM-only
+        # omega); it is now pinned to EFFECTIVE weights, matching R augsynth's
+        # progfunc='Ridge' l2_imbalance, by
+        # tests/validation_against_r/test_imbalance.py. If a change is ever
+        # needed, change what is passed here — never the imbalance helper.
+        l2_imb, scaled_l2_imb = imbalance(y1_pre_pdem, y0_pre_pdem, effective)
+
         pre_actual_mean = float(actual[pre_mask].mean())
         pre_actual_scale = abs(pre_actual_mean) if pre_actual_mean != 0 else 1.0
         rmspe_pre = float(np.sqrt(np.mean(gap[pre_mask] ** 2)) / pre_actual_scale)
@@ -618,10 +661,87 @@ class AugSynth:
         self.augmentation_weights_: dict[str, float] = augmentation_weights
         self.lambda_: float = float(effective_lambda)
         self.lambda_cv_path_: NDArray[np.float64] | None = cv_path
+        self.l2_imbalance_: float = l2_imb
+        self.scaled_l2_imbalance_: float = scaled_l2_imb
         self.att_: float = att
         self.att_pct_: float = att_pct
         self.rmspe_pre_: float = rmspe_pre
         self.treated_: Any = treated
         self.treatment_time_: Any = treatment_time
 
+        # Private scaffolding for the CWZ 2021 conformal refit-under-null
+        # (see _conformal_null_residuals). Raw outcome scale; the effective
+        # penalty ``lambda_`` is already stored as ``self.lambda_``. Not part
+        # of the public API.
+        self._y_matrix: NDArray[np.float64] = y_matrix
+        self._treated_idx: int = treated_idx
+        self._donor_idx: NDArray[np.intp] = donor_idx
+
         return self
+
+    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+        r"""Full-window residuals under the constant-effect null (CWZ 2021).
+
+        The augmented analogue of :meth:`Synth._conformal_null_residuals`. To
+        test :math:`H_0` that the post-treatment effect is a constant ``h0``,
+        subtract ``h0`` from the treated unit's post-period outcomes and
+        **refit the augmented synthetic control over the entire window** (all
+        ``T`` periods) at the already-selected penalty ``self.lambda_``, then
+        return the residual ``adjusted_treated - synthetic`` over all ``T``
+        periods. Under a true :math:`H_0` these residuals are exchangeable,
+        which makes the moving-block permutation test exact (Chernozhukov,
+        Wüthrich & Zhu 2021, §3).
+
+        The full-window refit reuses the exact ``omega``/``gamma`` machinery of
+        the point-estimate path (:meth:`fit` via
+        :func:`_period_demean_pre`, :meth:`Synth._solve_simplex_qp`,
+        :func:`_ridge_augment`), only over all ``T`` periods rather than the
+        pre-period. Matches ``augsynth``'s conformal refit
+        (``compute_permute_test_stats`` with ``progfunc='Ridge'``) on the
+        ``GeoLift_PreTest`` fixture to solver tolerance.
+
+        Parameters
+        ----------
+        h0
+            Hypothesized constant post-period effect, subtracted from the
+            treated unit on the post positions (``~pre_mask_``).
+
+        Returns
+        -------
+        NDArray[np.float64]
+            Length-``T`` residual vector on the original outcome scale.
+
+        Notes
+        -----
+        Does not mutate any stored array: the outcome matrix is copied before
+        the ``h0`` adjustment.
+        """
+        y_adj = self._y_matrix.copy()
+        post_mask = ~self.pre_mask_
+        y_adj[post_mask, self._treated_idx] -= h0
+
+        # Refit fixed effects over the FULL (h0-adjusted) window, matching the
+        # Synth conformal convention and R augsynth's Ridge refit.
+        if self.fixedeff:
+            offsets = y_adj.mean(axis=0)
+        else:
+            offsets = np.zeros(y_adj.shape[1], dtype=np.float64)
+        y_fit = y_adj - offsets
+
+        y1_full = y_fit[:, self._treated_idx]
+        y0_full = y_fit[:, self._donor_idx]
+
+        # Period-demean, then solve omega + gamma at the fitted lambda_. NB:
+        # _period_demean_pre is period-generic despite the ``_pre`` name; here
+        # it is applied over the FULL h0-adjusted window (all T rows), not the
+        # pre-period, matching this refit's full-window balancing.
+        y0_pdem, y1_pdem = _period_demean_pre(y0_full, y1_full)
+        omega = Synth._solve_simplex_qp(y1_pdem, y0_pdem)
+        gamma, _ = _ridge_augment(omega, y0_pdem, y1_pdem, lambda_=self.lambda_)
+
+        # The period-mean shift cancels in this projection (omega sums to 1,
+        # gamma to 0), so y0_full (unit-demeaned only) is the correct target —
+        # identical rationale to _fit_at_lambda.
+        synthetic = y0_full @ (omega + gamma) + offsets[self._treated_idx]
+        residuals: NDArray[np.float64] = y_adj[:, self._treated_idx] - synthetic
+        return residuals.astype(np.float64, copy=False)

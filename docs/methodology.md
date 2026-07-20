@@ -184,7 +184,123 @@ rewrites) and the empirical max-delta table.
 
 ---
 
-## 3. Generalized synthetic control (Xu, 2017)
+## 3. Multi-treated pooling and L2 imbalance (P0.1)
+
+Two cross-cutting facilities added for the geo-experimentation surface. Neither
+introduces a new estimator: both are shared infrastructure consumed by
+`Synth` (§1) and `AugSynth` (§2). They live in
+[`src/augsynth_py/synth/_panel.py`](../src/augsynth_py/synth/_panel.py).
+
+### 3.1 Multi-treated pooling
+
+**References:** Doudchenko & Imbens (2016) and Ben-Michael, Feller & Rothstein
+(2021) both frame synthetic control for a treated *unit*; the pooled-group
+extension for a block treatment applied to several units at a common
+intervention time is the standard reduction used by the R `augsynth` package.
+R `augsynth` is the parity **oracle** here, not the definitional source.
+
+**Code location:** [`long_to_wide`](../src/augsynth_py/synth/_panel.py) in
+`_panel.py`. `treated` accepts either a single unit value or an iterable of unit
+values.
+
+**Method.** When `treated` names a group $G = \{g_1, \dots, g_m\}$, the treated
+units are collapsed into a single fit target: their **elementwise mean** across
+units at each time period,
+
+$$
+\bar y_{G,t} \;=\; \frac{1}{m} \sum_{g \in G} y_{g,t},
+$$
+
+placed at column 0 of the outcome matrix, with all $g \in G$ removed from the
+donor pool. The estimator then fits this pooled series exactly as it would a
+single treated unit. Consequently `actual_`, `synthetic_`, `att_`, and
+`att_pct_` all refer to the treated-**group mean**; for a flow outcome the total
+incremental effect is `att_` $\times\, m \times T_{\text{post}}$ (number of
+treated units times number of post periods). `units_[0]` is the comma-joined,
+string-sorted label of the treated group (e.g. `[2, 10]` labels as `"10,2"`).
+
+**Why collapsing before demeaning is valid.** `Synth` subtracts each unit's
+pre-period mean (`apply_unit_fixedeff`) before the QP. It would be equally
+correct to demean every treated unit first and then average the demeaned
+columns; the shipped code averages first and demeans once. These give the
+identical result because **per-unit demeaning is a linear map applied
+identically to each column, so it distributes over the cross-column average**
+(collapse-then-demean equals demean-then-collapse). Averaging first is the
+cheaper of the two equivalent orders. (This is a distributivity property of a
+shared linear operator over an average — not a claim that two different
+operations commute.)
+
+**Validation.**
+[`tests/validation_against_r/test_multitreated.py`](../tests/validation_against_r/test_multitreated.py)
+designates `chicago` and `portland` as a hypothetical treated group on
+`GeoLift_PreTest` and asserts the pooled counterfactual path matches
+`augsynth`'s block-treatment fit strictly. Unit coverage for the pooling logic
+(mean collapse, donor-pool removal, label formatting, order invariance) is in
+[`tests/unit/test_multitreated.py`](../tests/unit/test_multitreated.py).
+
+### 3.2 L2 imbalance diagnostics
+
+**Paper:** Ben-Michael, Feller & Rothstein (2021), §3 — the pre-treatment fit /
+imbalance quantity. The exact scalar reported (`l2_imbalance`,
+`scaled_l2_imbalance`) mirrors what R `augsynth` surfaces; R is the parity
+oracle, not the definitional source.
+
+**Code location:** [`imbalance`](../src/augsynth_py/synth/_panel.py) in
+`_panel.py`, exposed as the fitted attributes `l2_imbalance_` and
+`scaled_l2_imbalance_` on both `Synth` and `AugSynth`.
+
+**Definitions.** For a treated pre-period vector $y_{1,\text{pre}}$, donor
+pre-period matrix $Y_{0,\text{pre}} \in \mathbb{R}^{T_0 \times J}$, and fitted
+weights $w$,
+
+$$
+\text{l2} \;=\; \big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w \big\|_2,
+\qquad
+\text{scaled} \;=\;
+\frac{\big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w \big\|_2}
+     {\big\| y_{1,\text{pre}} - Y_{0,\text{pre}}\, w_{\text{unif}} \big\|_2},
+\qquad w_{\text{unif}} = \tfrac{1}{J}\mathbf{1}.
+$$
+
+`l2_imbalance_` is the plain (unnormalized) residual norm in the space the
+weights were fit in. `scaled_l2_imbalance_` divides it by the imbalance of the
+uniform $1/J$ donor average. Because the scaled version is a **ratio of two
+norms in the same space**, it is invariant to any constant normalization of the
+norm — R's `l2_imbalance` uses the plain, unnormalized norm (so the two agree at
+ratio 1.0 on the scaled quantity regardless of that convention).
+
+**Zero-denominator (IEEE) convention.** When the uniform baseline fits
+$y_{1,\text{pre}}$ exactly, the denominator is 0. The code follows the IEEE
+semantics that an unguarded R division produces: denominator $> 0$ gives
+$\text{l2}/\text{denom}$; denominator $= 0$ with $\text{l2} > 0$ gives `inf`;
+$0/0$ gives `nan`.
+
+**Space and weights per estimator.** `imbalance` is space-agnostic — the caller
+supplies $y_{1,\text{pre}}$, $Y_{0,\text{pre}}$, and $w$ in whatever space the
+weights were fit:
+
+- **`Synth`** computes it in the **unit-fixed-effect-demeaned** space
+  (`apply_unit_fixedeff`, §1) using the **simplex** weights $w^\ast$.
+- **`AugSynth`** computes it in the **period-demeaned** space
+  (`_period_demean_pre`, §2) using the **effective** weights $\omega + \gamma$
+  (SCM plus ridge augmentation), matching R `augsynth(progfunc='Ridge')`. The
+  choice of *weights* (effective, not SCM-only $\omega$) is what the parity test
+  pins; the choice of *space* is immaterial for AugSynth because $\gamma$ sums to
+  0 whenever $\lambda > 0$ and $\omega$ sums to 1, so the period-mean term
+  cancels in the residual — only the weights choice is load-bearing.
+
+**Validation.**
+[`tests/validation_against_r/test_imbalance.py`](../tests/validation_against_r/test_imbalance.py)
+asserts both `l2_imbalance_` (raw) and `scaled_l2_imbalance_` match
+`augsynth` for `Synth` (`progfunc='None'`) and `AugSynth` (`progfunc='Ridge'`)
+on `GeoLift_PreTest`. The AugSynth case is the one that pins the effective-weights
+choice: had R used SCM-only $\omega$, both the raw and scaled numbers would
+disagree. Unit coverage (the IEEE inf/nan branches, the ratio invariance) is in
+[`tests/unit/test_imbalance.py`](../tests/unit/test_imbalance.py).
+
+---
+
+## 4. Generalized synthetic control (Xu, 2017)
 
 **Paper:** Xu, Y. (2017). Generalized Synthetic Control Method: Causal
 Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1),
@@ -194,20 +310,169 @@ Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1),
 
 ---
 
-## 4. Conformal inference for synthetic controls (Chernozhukov, Wuthrich & Zhu, 2021)
+## 5. Conformal inference for synthetic controls (Chernozhukov, Wüthrich & Zhu, 2021)
 
-**Paper:** Chernozhukov, V., Wuthrich, K., & Zhu, Y. (2021). An Exact and
+**Paper:** Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An Exact and
 Robust Conformal Inference Method for Counterfactual and Synthetic Controls.
-*Journal of the American Statistical Association*, 116(536), 1849–1864.
+*Journal of the American Statistical Association*, 116(536), 1849–1864
+(hereafter CWZ 2021).
 
-**Code location:** `src/augsynth_py/inference/conformal.py` *(not yet implemented)*
+**Code location:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
+— public functions `conformal_pvalue` and `conformal_interval`, built on the
+private permutation core (`_post_statistic`, `_permutation_pvalue`) and the
+estimator hook `_conformal_null_residuals` on both `Synth` (§1) and `AugSynth`
+(§2). Neither function is a new estimator: both operate on an already-fitted
+`Synth` or `AugSynth`.
 
-**Method.** Provides finite-sample valid p-values for the null of no
-treatment effect by permuting residuals across the pre-period.
+**Estimator surface.** Two functions operating on any fitted estimator:
+
+- `conformal_pvalue(fit, h0=0.0, *, permutation_type="block", side="two-sided",
+  ns=1000, rng=None) -> float` — the conformal p-value for the null of a
+  **constant** post-period effect equal to `h0`.
+- `conformal_interval(fit, *, alpha=0.05, grid_size=100, permutation_type="block",
+  side="two-sided", ns=1000, rng=None) -> tuple[float, float]` — a
+  $(1-\alpha)$ confidence interval for that constant effect, by test inversion.
+
+### 5.1 Refit-under-null residual construction
+
+CWZ 2021 (§3) tests $H_0$: the post-treatment effect is constant and equal to
+$h_0$. The test is exact because, under $H_0$, the full-window residuals are
+**exchangeable**. To realize that exchangeability the treated unit's
+post-period outcomes are adjusted by $h_0$,
+
+$$
+\tilde y_{1,t} \;=\;
+\begin{cases}
+y_{1,t} & t \in \text{pre}, \\
+y_{1,t} - h_0 & t \in \text{post},
+\end{cases}
+$$
+
+and the synthetic control is **refit over the entire window** — all $T$
+periods, not the pre-period only (for `fixedeff` the demeaning is likewise taken
+over the full $h_0$-adjusted window). The residual handed to the permutation
+core is the full-length $T$-vector $\hat u_t = \tilde y_{1,t} - \hat y_{1,t}(0)$
+from that refit. This is the `_conformal_null_residuals(h0)` hook on each
+estimator.
+
+The full-window refit is the load-bearing step: only a control fit on the
+$h_0$-adjusted *full* window makes the pre- and post-period residuals draws from
+a common law, which is what CWZ 2021 §3 requires for the permutation
+distribution to be valid in finite samples. Refitting on the pre-period alone
+and reusing those weights out-of-sample leaves post-period residuals with a
+different distribution than the pre-period ones, breaking exchangeability.
+
+**The point estimate stays pre-period-fit; only inference refits.** The reported
+`att_` / `gap_` / `synthetic_` come from the pre-period counterfactual (§1, §2)
+and are *not* recomputed here — the ATT is a pre-period-anchored quantity. The
+refit-under-null is exclusively an inference construct: it produces exchangeable
+residuals for the permutation test and never touches the point estimate.
+
+> **Note (rejected shortcut).** An initial "no-refit" approximation — reuse the
+> pre-period weights and set the post-period residual to $\text{gap}_t - h_0$ —
+> was implemented first and **rejected**. Those residuals are not exchangeable
+> (the pre-period residuals are in-sample, the post-period ones are not), and the
+> resulting p-values did **not** match R `augsynth`. Do not reintroduce it as the
+> default. (A no-refit *fast approximation* is a possible future opt-in for the
+> `geolift-py` simulation loop, never the exact path.)
+
+### 5.2 Test statistic and permutation schemes
+
+On the full-window residual vector $\hat u$, the CWZ test statistic is evaluated
+on the **fixed post positions** (`_post_statistic`):
+
+$$
+S(\hat u) \;=\;
+\begin{cases}
+\sum_{t \in \text{post}} |\hat u_t| & \text{`side="two-sided"`}, \\
+\sum_{t \in \text{post}} \hat u_t & \text{`side="right"`}, \\
+-\sum_{t \in \text{post}} \hat u_t & \text{`side="left"`}.
+\end{cases}
+$$
+
+CWZ's $1/\sqrt{T_1}$ normalization is constant across permutations, so it
+cancels in the rank and is omitted. Two permutation schemes produce the p-value:
+
+- **`block`** (default, deterministic): the reference set is the $T$ cyclic
+  shifts $\texttt{np.roll}(\hat u, j)$, $j = 0, \dots, T-1$, with the statistic
+  re-read on the fixed post positions. Since the observed statistic ($j=0$) is
+  always in the set, $p = \#\{j : S_j \ge S_\text{obs}\}\,/\,T$. This is the
+  moving-block scheme of CWZ 2021 §3. **Granularity floor:** $p$ is a multiple
+  of $1/T$ and peaks near $1/T$, so a $(1-\alpha)$ CI is only feasible when
+  $T \gtrsim 1/\alpha$ (e.g. a 95% interval needs $T \ge 20$ total periods).
+- **`iid`**: `ns` random permutations drawn from `rng`, with the
+  finite-sample-valid convention
+  $p = \bigl(1 + \#\{S_\text{perm} \ge S_\text{obs}\}\bigr)\,/\,(1 + ns)$.
+  Requires a non-`None` `rng`.
+
+### 5.3 Confidence interval by test inversion
+
+`conformal_interval` inverts the two-sided test: the $(1-\alpha)$ interval is
+the acceptance region
+
+$$
+\mathrm{CI}_{1-\alpha} \;=\; \{\, h_0 : \texttt{conformal\_pvalue}(fit, h_0) \ge \alpha \,\},
+$$
+
+approximated on a finite grid centred at `att_` and spanning
+$\pm 6\,\mathrm{sd}(\text{post gap})$ (with `0.0` always unioned in so the sharp
+null is scored). Each grid point is a **separate refit-under-null**, so a CI
+costs roughly `grid_size` refits. Only the **two-sided** test can be inverted
+into a bounded interval — a one-sided acceptance region is a half-line, so any
+other `side` raises `ValueError`.
+
+**Auto-expansion / truncation guard.** The span is seeded from the
+*point-estimate* gap dispersion, but each point is scored by the *full-window
+refit* acceptance region, a different and often wider quantity (tight donors give
+a small `sd`, yet a low-power conformal test accepts a broad range of $h_0$). If
+an accepted endpoint reaches a grid boundary the span is doubled (centre,
+`grid_size` and the unioned `0.0` preserved) and re-scored, up to 8 doublings.
+If truncation persists at the cap a `UserWarning` is emitted and the widest
+computed bounds are returned as a lower bound on the true interval. Under `block`
+the $p(h_0)$ curve peaks near a well-specified $h_0$ and decays to a **floor of
+$1/T$** (the $j=0$ identity shift always ties itself) at extreme $h_0$; when
+$T \le 1/\alpha$ that floor keeps $p(h_0) \ge 1/T \ge \alpha$ at *every* $h_0$,
+so the acceptance region is **unbounded** and lands in exactly this
+truncation/`UserWarning` branch.
+
+This is distinct from an **empty** acceptance region, which returns `(nan, nan)`
+and which widening cannot fix. Empty requires the *peak* of $p(h_0)$ to fall
+below $\alpha$ — driven by residual **non-exchangeability** (a poor / trending
+fit), and only *possible* when $1/T < \alpha$ (i.e. $T > 1/\alpha$); it is **not**
+caused by, and does not occur under, the small-$T$ ($T \le 1/\alpha$) floor
+regime above.
+
+### 5.4 Validation
+
+Parity is pinned in
+[`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py):
+
+- **`block` p-value — exact.** Matches R `augsynth`'s conformal inference
+  **exactly** at multiple $h_0$, for both `Synth` (`progfunc='None'`) and
+  `AugSynth` (`progfunc='Ridge'`) on `GeoLift_PreTest`. The refit-under-null is
+  what makes this hold; the rejected no-refit shortcut did not.
+- **`iid` p-value — statistical.** Agrees with R `augsynth`'s conformal
+  p-value within a documented Monte-Carlo tolerance (`0.03`) for a fixed `rng`
+  and large `ns`; seeds do not transfer between R and Python, so exact parity is
+  not expected on this path.
+- **Confidence interval — transitive.** R `augsynth` exposes no *aggregate*
+  conformal CI (only per-period intervals), so there is no direct oracle for
+  `conformal_interval`. It is validated transitively: the interval is pure test
+  inversion over `conformal_pvalue`, and $p(h_0)$ matches R exactly at every
+  tested $h_0$, so the inverted region is correct by construction.
+
+### 5.5 Cost note for `geolift-py`
+
+Because inference now refits the synthetic control once per $h_0$ (≈ `grid_size`
+refits per CI), conformal inference is **no longer cheap**. The earlier
+`geolift-py` simulation fast-path assumption that conformal inference reuses the
+pre-period fit (no refit) is **void**. A no-refit fast approximation remains a
+possible future opt-in for the power-simulation loop, but it is not the default
+and is not the exact CWZ path.
 
 ---
 
-## 5. Power analysis and market selection (orchestration layer)
+## 6. Power analysis and market selection (orchestration layer)
 
 **Reference:** GeoLift R package documentation and underlying use of ASCM
 for simulation-based power calculation.

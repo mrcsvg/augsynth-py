@@ -31,6 +31,7 @@ from numpy.typing import NDArray
 
 from augsynth_py.synth._panel import (
     apply_unit_fixedeff,
+    imbalance,
     long_to_wide,
     pre_period_mask,
 )
@@ -60,7 +61,10 @@ class Synth:
     weights_ : dict[str, float]
         Donor unit name -> weight, all non-negative, summing to 1.
     units_ : list[str]
-        All units in the order used internally; ``units_[0]`` is the treated unit.
+        All units in the order used internally; ``units_[0]`` is the treated
+        unit. For a multi-treated fit (``treated`` passed as an iterable),
+        ``units_[0]`` is the comma-joined group label (e.g. ``"u0,u1"``)
+        rather than a single panel unit name.
     periods_ : numpy.ndarray
         Time index of length ``T`` in row order of the internal outcome matrix.
     actual_ : numpy.ndarray
@@ -70,12 +74,31 @@ class Synth:
     gap_ : numpy.ndarray
         ``actual_ - synthetic_``.
     att_ : float
-        Mean post-treatment gap (in original outcome units).
+        Mean post-treatment gap (in original outcome units). For a
+        multi-treated fit this is the effect on the treated-group *mean*;
+        for flow outcomes (where summing across units and periods is
+        meaningful, e.g. sales or conversions), the total incremental effect
+        is ``att_ * n_treated * n_post_periods`` (downstream consumers such
+        as geolift-py do this multiplication — do not double-count).
     att_pct_ : float
-        ``att_`` divided by ``mean(actual_[pre])``.
+        ``att_`` divided by ``mean(actual_[pre])``. Same treated-group-mean
+        semantics as ``att_`` for multi-treated fits.
     rmspe_pre_ : float
         Pre-period root-mean-squared prediction error, normalized by
         ``|mean(actual_[pre])|``.
+    l2_imbalance_ : float
+        Pre-period L2 imbalance ``||y1_pre - Y0_pre @ w||_2``, computed in the
+        same space the weights were fit in (i.e. the demeaned pre-period fit
+        space when ``fixedeff=True``). Matches the R ``augsynth``
+        ``l2_imbalance`` definition.
+    scaled_l2_imbalance_ : float
+        ``l2_imbalance_`` divided by the L2 imbalance of uniform ``1/J`` donor
+        weights, matching R ``augsynth``'s ``scaled_l2_imbalance``. Values
+        below 1 mean the fitted weights balance better than the uniform
+        baseline; as a ratio it is invariant to any constant normalization of
+        the norm. If the uniform baseline fits the pre-period exactly, this
+        follows the IEEE convention of unguarded R division: ``inf`` when the
+        fitted imbalance is positive, ``nan`` when both are zero (0/0).
     """
 
     def __init__(self, *, fixedeff: bool = True) -> None:
@@ -100,7 +123,14 @@ class Synth:
         unit, time, outcome
             Column names in ``panel``.
         treated
-            Value in the ``unit`` column identifying the treated unit.
+            Value in the ``unit`` column identifying the treated unit, or an
+            iterable of such values. An iterable designates a treated *group*;
+            the units are collapsed to their elementwise mean and excluded
+            from the donor pool (see
+            :func:`augsynth_py.synth._panel.long_to_wide`). ``actual_``,
+            ``synthetic_``, ``att_``, and ``att_pct_`` then refer to the
+            treated-group mean. Typed ``Any`` because polars unit values are
+            heterogeneous (str, int, date, ...).
         treatment_time
             First period considered post-treatment. Rows with ``time <
             treatment_time`` form the pre-period used for fitting.
@@ -125,6 +155,7 @@ class Synth:
         y0_pre = y_fit[np.ix_(pre_mask, donor_idx)]
 
         weights = self._solve_simplex_qp(y1_pre, y0_pre)
+        l2_imb, scaled_l2_imb = imbalance(y1_pre, y0_pre, weights)
 
         synthetic_fit = y_fit[:, donor_idx] @ weights
         # Re-add the treated unit's pre-period offset so the counterfactual is on
@@ -154,11 +185,77 @@ class Synth:
         self.att_: float = att
         self.att_pct_: float = float(att_pct)
         self.rmspe_pre_: float = rmspe_pre
+        self.l2_imbalance_: float = l2_imb
+        self.scaled_l2_imbalance_: float = scaled_l2_imb
         self.pre_mask_: NDArray[np.bool_] = pre_mask
         self.treated_: Any = treated
         self.treatment_time_: Any = treatment_time
 
+        # Private scaffolding for the CWZ 2021 conformal refit-under-null
+        # (see _conformal_null_residuals). Stored on the raw outcome scale so
+        # the refit can re-derive its own fixed-effect offsets after adjusting
+        # the treated post-period by h0. Not part of the public API.
+        self._y_matrix: NDArray[np.float64] = y_matrix
+        self._treated_idx: int = treated_idx
+        self._donor_idx: NDArray[np.intp] = donor_idx
+
         return self
+
+    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+        r"""Full-window residuals under the constant-effect null (CWZ 2021).
+
+        Implements the residual construction of Chernozhukov, Wüthrich & Zhu
+        (2021), §3: to test :math:`H_0` that the post-treatment effect is a
+        constant ``h0``, subtract ``h0`` from the treated unit's post-period
+        outcomes and **refit the synthetic control over the entire window**
+        (all ``T`` periods, not just the pre-period), then return the residual
+        ``adjusted_treated - synthetic`` over all ``T`` periods. Under a true
+        :math:`H_0` these full-window residuals are exchangeable, which is what
+        makes the subsequent moving-block permutation test exact.
+
+        This deliberately re-fits — unlike the point-estimate path
+        (:meth:`fit`), whose weights are pre-period-only. The two are different
+        by design: the ATT is a pre-period-anchored counterfactual, while the
+        conformal null residual is CWZ's full-window exchangeability construct.
+        Matches ``augsynth``'s conformal refit (``compute_permute_test_stats``)
+        on the ``GeoLift_PreTest`` fixture to solver tolerance.
+
+        Parameters
+        ----------
+        h0
+            Hypothesized constant post-period effect. Subtracted from the
+            treated unit's outcomes on the post positions (``~pre_mask_``).
+
+        Returns
+        -------
+        NDArray[np.float64]
+            Length-``T`` residual vector ``adjusted_treated - synthetic`` over
+            the full window, on the original outcome scale.
+
+        Notes
+        -----
+        Does not mutate any stored array: the outcome matrix is copied before
+        the ``h0`` adjustment.
+        """
+        y_adj = self._y_matrix.copy()
+        post_mask = ~self.pre_mask_
+        y_adj[post_mask, self._treated_idx] -= h0
+
+        # Refit fixed effects over the FULL window (CWZ treats the whole,
+        # h0-adjusted span as the balancing period), not the pre-period only.
+        if self.fixedeff:
+            offsets = y_adj.mean(axis=0)
+        else:
+            offsets = np.zeros(y_adj.shape[1], dtype=np.float64)
+        y_fit = y_adj - offsets
+
+        y1_full = y_fit[:, self._treated_idx]
+        y0_full = y_fit[:, self._donor_idx]
+        weights = self._solve_simplex_qp(y1_full, y0_full)
+
+        synthetic = y0_full @ weights + offsets[self._treated_idx]
+        residuals: NDArray[np.float64] = y_adj[:, self._treated_idx] - synthetic
+        return residuals.astype(np.float64, copy=False)
 
     @staticmethod
     def _solve_simplex_qp(

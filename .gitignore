@@ -83,3 +83,6 @@ docs/plans/
 
 # Paper working material (local only — not part of the package)
 paper/
+
+# Git worktrees (local isolated workspaces)
+.worktrees/
