@@ -40,6 +40,13 @@ jobs:
           key: r-${{ runner.os }}-${{ hashFiles('.github/workflows/validation.yml') }}
 
       - name: Install R dependencies
+        # remotes::install_github reads GITHUB_PAT to authenticate against the
+        # GitHub API. Without it the runner uses an anonymous (or exhausted
+        # bundled) token and hits the 60 req/hr rate limit, failing with
+        # "cannot open URL 'https://api.github.com/repos/.../DESCRIPTION'".
+        # GITHUB_TOKEN is injected automatically and lifts the limit to 1000/hr.
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Rscript -e 'install.packages(c("remotes", "Synth"), repos="https://cloud.r-project.org")'
           Rscript -e 'remotes::install_github("ebenmichael/augsynth", upgrade = "never")'

@@ -110,8 +110,13 @@ convention = "numpy"
 # ---------------------------------------------------------------------------
 # Mypy: strict type checking on src/, lenient on tests/
 # ---------------------------------------------------------------------------
+# python_version targets 3.12 (not the 3.11 floor) so mypy can parse the PEP 695
+# `type` statements in modern numpy's bundled stubs (numpy >= 2.5's __init__.pyi),
+# which mypy rejects as a syntax error under a 3.11 target. Our own code stays
+# 3.11-compatible: ruff's target-version is py311 and the unit-test matrix runs on
+# 3.11, so 3.11-only breakage is still caught outside mypy.
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_unused_configs = true
 warn_redundant_casts = true
