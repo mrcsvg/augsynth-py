@@ -40,8 +40,16 @@ dependencies = [
 [project.optional-dependencies]
 validation = [
     # Required to run tests/validation_against_r/.
-    # Also requires R (>=4.0) and the augsynth R package installed on the system.
+    # Also requires R (>=4.5) and the augsynth R package installed on the system.
     "rpy2>=3.5",
+    # conftest.py bridges the R GeoLift_PreTest data.frame to polars via rpy2's
+    # pandas2ri converter (R -> pandas -> polars), so pandas must be importable
+    # for the validation suite. pyarrow backs pl.from_pandas for the non-numpy
+    # (string 'location') column — without it the bridge raises ImportError.
+    # Both are test-only; the library itself uses polars exclusively (no pandas
+    # in src/). Verified end-to-end on the exact conftest conversion path.
+    "pandas>=2.0",
+    "pyarrow>=14.0",
 ]
 dev = [
     "pytest>=8.0",
