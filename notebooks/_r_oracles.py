@@ -16,8 +16,9 @@ All R wrappers return a `FitResult` dataclass — notebook code never touches rp
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -28,6 +29,7 @@ import polars as pl
 
 # Caching the bridge object means importing this module is cheap; rpy2 only
 # loads the first time an R wrapper is actually called.
+
 
 def _r() -> Any:
     if not hasattr(_r, "_cached"):
@@ -87,33 +89,33 @@ CITIES_BR: list[tuple[str, str, float]] = [
 
 # (lat, lon) for each BR capital, used by the showcase notebook map plots.
 CITY_COORDS: dict[str, tuple[float, float]] = {
-    "São Paulo":      (-23.55, -46.63),
+    "São Paulo": (-23.55, -46.63),
     "Rio de Janeiro": (-22.91, -43.17),
     "Belo Horizonte": (-19.92, -43.94),
-    "Vitória":        (-20.32, -40.34),
-    "Curitiba":       (-25.43, -49.27),
-    "Porto Alegre":   (-30.03, -51.23),
-    "Florianópolis":  (-27.59, -48.55),
-    "Salvador":       (-12.97, -38.51),
-    "Recife":         (-8.05,  -34.88),
-    "Fortaleza":      (-3.73,  -38.52),
-    "Natal":          (-5.79,  -35.20),
-    "João Pessoa":    (-7.12,  -34.86),
-    "Maceió":         (-9.65,  -35.71),
-    "Aracaju":        (-10.91, -37.07),
-    "São Luís":       (-2.53,  -44.30),
-    "Teresina":       (-5.09,  -42.81),
-    "Manaus":         (-3.12,  -60.02),
-    "Belém":          (-1.46,  -48.50),
-    "Porto Velho":    (-8.76,  -63.90),
-    "Rio Branco":     (-9.97,  -67.81),
-    "Boa Vista":      ( 2.82,  -60.67),
-    "Macapá":         ( 0.04,  -51.07),
-    "Palmas":         (-10.18, -48.33),
-    "Brasília":       (-15.79, -47.88),
-    "Goiânia":        (-16.67, -49.27),
-    "Campo Grande":   (-20.45, -54.62),
-    "Cuiabá":         (-15.60, -56.10),
+    "Vitória": (-20.32, -40.34),
+    "Curitiba": (-25.43, -49.27),
+    "Porto Alegre": (-30.03, -51.23),
+    "Florianópolis": (-27.59, -48.55),
+    "Salvador": (-12.97, -38.51),
+    "Recife": (-8.05, -34.88),
+    "Fortaleza": (-3.73, -38.52),
+    "Natal": (-5.79, -35.20),
+    "João Pessoa": (-7.12, -34.86),
+    "Maceió": (-9.65, -35.71),
+    "Aracaju": (-10.91, -37.07),
+    "São Luís": (-2.53, -44.30),
+    "Teresina": (-5.09, -42.81),
+    "Manaus": (-3.12, -60.02),
+    "Belém": (-1.46, -48.50),
+    "Porto Velho": (-8.76, -63.90),
+    "Rio Branco": (-9.97, -67.81),
+    "Boa Vista": (2.82, -60.67),
+    "Macapá": (0.04, -51.07),
+    "Palmas": (-10.18, -48.33),
+    "Brasília": (-15.79, -47.88),
+    "Goiânia": (-16.67, -49.27),
+    "Campo Grande": (-20.45, -54.62),
+    "Cuiabá": (-15.60, -56.10),
 }
 
 
@@ -147,7 +149,6 @@ def make_panel(
     classical SCM that AugSynth (Ben-Michael et al. 2021) is designed to fix.
     """
     rng = np.random.default_rng(seed)
-    n_cities = len(CITIES_BR)
     days = np.arange(n_days)
 
     seasonal_pct = 0.04 * np.sin(2 * np.pi * days / 7)
@@ -165,13 +166,7 @@ def make_panel(
     for city, region, baseline in CITIES_BR:
         trend = rng.uniform(0.0005, 0.0015)
         idio = rng.normal(0, 0.025 * pre_fit_difficulty, size=n_days)
-        sales_pct = (
-            1.0
-            + trend * days
-            + seasonal_pct
-            + region_shocks[region]
-            + idio
-        )
+        sales_pct = 1.0 + trend * days + seasonal_pct + region_shocks[region] + idio
         sales = baseline * sales_pct
 
         if city == treated_city:
@@ -202,6 +197,7 @@ def make_panel(
 # Naive DiD — pure Python
 # ---------------------------------------------------------------------------
 
+
 def naive_did(
     panel: pl.DataFrame,
     treated_city: str = "São Paulo",
@@ -231,6 +227,7 @@ def naive_did(
 # ---------------------------------------------------------------------------
 # R wrappers
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FitResult:
@@ -284,16 +281,11 @@ def _fit_via_augsynth(
     # weights: named single-column matrix, donors as rownames
     w_arr = np.asarray(r.ro.r("res$weights"), dtype=float).ravel()
     w_names = list(r.ro.r("rownames(res$weights)"))
-    weights = {name: float(w) for name, w in zip(w_names, w_arr)}
+    weights = {name: float(w) for name, w in zip(w_names, w_arr, strict=True)}
 
     synthetic = np.asarray(r.ro.r("predict(res, att = FALSE)"), dtype=float)
 
-    actual = (
-        panel.filter(pl.col(unit) == treated_city)
-        .sort(time)[outcome]
-        .to_numpy()
-        .astype(float)
-    )
+    actual = panel.filter(pl.col(unit) == treated_city).sort(time)[outcome].to_numpy().astype(float)
     gap = actual - synthetic
 
     pre_actual_mean = float(np.mean(actual[:treatment_day]))
@@ -419,6 +411,7 @@ def fit_augsynth_r(
 # Placebo permutation
 # ---------------------------------------------------------------------------
 
+
 def placebo_test(
     panel: pl.DataFrame,
     treated_city: str = "São Paulo",
@@ -445,15 +438,11 @@ def placebo_test(
             treat=((pl.col("city") == donor) & pl.col("post")).cast(pl.Int32),
         )
         try:
-            placebos[donor] = fitter(
-                re_panel, treated_city=donor, treatment_day=treatment_day
-            )
+            placebos[donor] = fitter(re_panel, treated_city=donor, treatment_day=treatment_day)
         except Exception:
             continue
 
-    kept_placebos = {
-        k: v for k, v in placebos.items() if v.rmspe_pre <= threshold
-    }
+    kept_placebos = {k: v for k, v in placebos.items() if v.rmspe_pre <= threshold}
     treated_abs = abs(treated_fit.att_avg)
     n_extreme = sum(1 for v in kept_placebos.values() if abs(v.att_avg) >= treated_abs)
     p_value = (n_extreme + 1) / (len(kept_placebos) + 1)

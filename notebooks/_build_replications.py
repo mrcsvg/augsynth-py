@@ -835,17 +835,15 @@ def build_cells(spec: ReplicationSpec) -> list[dict]:
     # --- Act 2 ------------------------------------------------------------
     cells.append(
         md(
-            """
+            f"""
         ## Act 2 — Why naive comparisons fail
 
-        The most tempting comparison is **{treated} vs the mean of the other units**, before and
+        The most tempting comparison is **{spec.treated_short} vs the mean of the other units**, before and
         after the intervention. This is the textbook 2×2 difference-in-differences (DiD), and it
-        leans on a strong assumption: that without the intervention, {treated} would have moved
+        leans on a strong assumption: that without the intervention, {spec.treated_short} would have moved
         *in parallel* with the donor mean. The plot below puts the assumption under the
         microscope.
-        """.format(
-                treated=spec.treated_short
-            )
+        """
         )
     )
 
@@ -948,7 +946,7 @@ def build_cells(spec: ReplicationSpec) -> list[dict]:
     # --- Act 4 ------------------------------------------------------------
     cells.append(
         md(
-            f"""
+            """
         ## Act 4 — Visualising the fit
 
         Three plots in sequence: (1) which donors carry weight, (2) the synthetic vs the real
@@ -1081,7 +1079,7 @@ def build_cells(spec: ReplicationSpec) -> list[dict]:
     # --- Act 6 ------------------------------------------------------------
     cells.append(
         md(
-            f"""
+            """
         ## Act 6 — What classical SCM doesn't (yet) solve
 
         Three limitations of the v0.1 `Synth` estimator, each tied to a concrete next step on the

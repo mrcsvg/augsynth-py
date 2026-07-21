@@ -460,8 +460,89 @@ Parity is pinned in
   `conformal_interval`. It is validated transitively: the interval is pure test
   inversion over `conformal_pvalue`, and $p(h_0)$ matches R exactly at every
   tested $h_0$, so the inverted region is correct by construction.
+- **Second fixture — the $p(h_0)$ curve on the Basque panel.** The block
+  p-value also matches R exactly on the Abadie & Gardeazabal (2003) Basque
+  panel (`Synth(fixedeff=False)`), at probes spanning the full structure of
+  the curve — both $1/T$ floors, the left cliff, the rejected gap at the
+  point estimate, and the off-centre peak (§5.5). An 89-point sweep of
+  $h_0 \in [-12, 16]$ agreed with
+  max $|p_\text{py} - p_\text{r}| = 4.4 \times 10^{-16}$ (one ulp; identical
+  shift-counts $k/43$ at every point). This fixture needs only the `augsynth`
+  R package, decoupling conformal parity from `GeoLift_PreTest`.
 
-### 5.5 Cost note for `geolift-py`
+### 5.5 Interval asymmetry is a property of test inversion (I-1)
+
+On the Basque panel (classical `Synth(fixedeff=False)`, treatment 1975) the
+point estimate is `att_ = -0.6915` yet the 95% block interval is
+`(-3.2169, 7.6864)` — skewed strongly positive, with `att_` far left of centre.
+This was tracked as known-issue I-1 (opened 2026-07-07, resolved 2026-07-20)
+under the suspicion of a defect in the grid construction, the null-refit, or
+the interval extraction. It is none of these: the full $p(h_0)$ curve matches
+R `augsynth` pointwise to one ulp (see §5.4), so R inverts the *identical*
+acceptance region; the grid is symmetric about `att_` (§5.3); and the
+extraction faithfully reports the accepted region's min/max. The asymmetry is
+the method's.
+
+What the curve actually looks like on this panel, identically in both
+implementations:
+
+- $p(h_0)$ is **non-monotone** and peaks at $h_0 \approx +4.5$ with
+  $p = 36/43$ — nowhere near `att_`. It holds a broad high plateau over
+  roughly $h_0 \in [+1, +5]$, decays through $p = 5/43$ at $+7.5$, and hits
+  the $1/T$ floor at $+8.25$.
+- On the left it collapses from $p = 17/43$ at $-3.0$ to the floor by
+  $-3.75$ — a cliff.
+- The acceptance region is **non-contiguous**: a rejected window at the
+  $1/T$ floor sits essentially *at the point estimate* — $p = 1/43 \approx
+  0.023 < \alpha$ for $h_0 \in$ roughly $[-0.70, -0.35]$ (0.05-step scan), a
+  gap that contains `att_` $= -0.6915$ itself, flanked by $p = 3/43$ at
+  $-0.75$ and $-0.25$. R returns the identical $1/43$ at the swept points
+  (e.g. $h_0 = -0.5$). `conformal_interval` reports min/max of the accepted
+  set, so the published $(-3.2169, 7.6864)$ silently **bridges** this gap:
+  the non-contiguity caveat documented at the extraction step is not
+  hypothetical — it binds on this very panel (audit D-6).
+
+**Mechanism.** The test statistic is the *rank* of the post-window block sum
+$\sum_{\text{post}} |\hat u_t|$ among all $T$ cyclic shifts of the full-window
+residual vector, and the residuals come from a refit against a donor pool
+whose convex hull cannot reach the treated series from below (no intercept
+with `fixedeff=False`; the Basque Country sits near the top of the donor
+span). Testing a *negative* $h_0$ raises the adjusted treated post-period
+further above the hull: no simplex combination follows, residual mass
+concentrates in the post window (share $0.79$–$0.96$ of $\sum_t |\hat u_t|$),
+the post block ranks extreme, and $p$ dies. Testing a *positive* $h_0$ lowers
+the treated post-period into the donors' range: the full-window refit
+compromises between pre and post, spreading misfit across the window (post
+share $\approx 0.48$, *below* the post period-share $23/43 \approx 0.53$), so
+the post block ranks unexceptional among shifts and $p$ stays high across the
+plateau.
+
+The rejection *at* the well-specified null is the same geometry seen from the
+other side: near $h_0 \approx$ `att_` the full-window refit drives the
+pre-window residuals to near zero — the Basque pre-fit is exceptionally tight
+— while the post window keeps its genuine dispersion, so the post block sum
+ranks first among all $T$ cyclic shifts and $p$ sits on the $1/T$ floor.
+Exchangeability of the full-window residuals, the premise of CWZ exactness,
+fails *locally* through pre/post dispersion imbalance; only once $h_0$ is
+far enough from the data to degrade the pre-fit as well does the post block
+stop standing out — which is what produces the acceptance plateau away from
+the point estimate.
+
+Three practical consequences. First, a conformal interval from test inversion
+need not be centred on — nor even *accept* — the point estimate: here
+$p(\texttt{att\_}) = 1/43 < \alpha$, and `att_` lies inside the reported
+bounds only because min/max bridges the rejected gap. Second, on panels like
+this the reported bounds must be read as the **envelope** of a non-contiguous
+acceptance set; the audit's D-6 recommendation (assert/flag contiguity at
+extraction) is thereby upgraded from prudence to demonstrated need. Third,
+the Basque interval remains usable as a published illustrative example — the
+entire curve, including the asymmetry, the plateau, and the rejected gap, is
+shared exactly with the R reference — provided the text presents it as the
+envelope of the acceptance region rather than as a connected interval.
+Parity is pinned by `test_basque_pvalue_curve_matches_r_exact` in
+[`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py).
+
+### 5.6 Cost note for `geolift-py`
 
 Because inference now refits the synthetic control once per $h_0$ (≈ `grid_size`
 refits per CI), conformal inference is **no longer cheap**. The earlier

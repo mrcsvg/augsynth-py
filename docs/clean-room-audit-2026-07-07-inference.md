@@ -25,6 +25,20 @@ unconditional: the inverted confidence interval is markedly asymmetric about the
 point estimate on the Basque panel, and that asymmetry has not been checked
 against R.
 
+> **Update (2026-07-20).** The §6.2 open question is resolved: the full
+> $p(h_0)$ curve was compared against R `augsynth` on the same Basque panel
+> (89 points, $h_0 \in [-12, 16]$) and agrees to one ulp
+> (max $|p_\text{py} - p_\text{r}| = 4.4 \times 10^{-16}$, identical
+> shift-counts at every point). The asymmetry is a property of CWZ test
+> inversion on this panel, shared exactly by R — not an implementation defect.
+> The sweep also revealed that the acceptance region is **non-contiguous** at
+> $\alpha = 0.05$ on that panel (a rejected $1/T$-floor gap containing
+> `att_`, identical in R), which makes the D-6 contiguity assertion of
+> Recommendation 4 a demonstrated need rather than a precaution.
+> See the update in §6.2, `methodology.md` §5.5, and
+> `test_basque_pvalue_curve_matches_r_exact` in the parity harness. The §1.1
+> disclosure condition in §6.1 is unaffected and remains open.
+
 ---
 
 ## 1. What "clean-room" means in this project
@@ -362,6 +376,37 @@ depend on $h_0$ through the refit, so $p(h_0)$ has no symmetry guarantee. But
 direct comparison against R's $p(h_0)$ curve on the same panel — which the
 existing exact-parity harness makes cheap to run.
 
+> **Update (2026-07-20) — resolved, property confirmed.** The closing
+> criterion was executed: an 89-point sweep of $h_0 \in [-12, 16]$ on the same
+> panel and fit matches R `augsynth`'s conformal p-value pointwise with
+> max $|p_\text{py} - p_\text{r}| = 4.4 \times 10^{-16}$ (one ulp; the
+> integer shift-counts $k/43$ are identical at all 89 points), so R inverts
+> the identical acceptance region. The curve itself is non-monotone: it peaks
+> at $h_0 \approx +4.5$ ($p = 36/43$), not at `att_`, holds a broad plateau on
+> the right, collapses to the $1/T$ floor by $h_0 = -3.75$ on the left — and
+> the acceptance region is in fact **non-contiguous**: a rejected window at
+> the $1/T$ floor ($p = 1/43 < \alpha$) spans roughly $h_0 \in [-0.70, -0.35]$
+> and **contains `att_` $= -0.6915$ itself**, flanked by $p = 3/43$ at
+> $-0.75$ and $-0.25$; R returns the identical $1/43$ (e.g. at $h_0 = -0.5$).
+> `conformal_interval`'s min/max extraction bridges this gap silently, so
+> **D-6 is no longer hypothetical** — Recommendation 4's contiguity assertion
+> is demonstrated to bind on a real panel and rises in priority.
+> Mechanism: with `fixedeff=False` the donor simplex has no
+> intercept and the Basque series sits near the top of the donor span, so
+> raising the treated post-period (negative $h_0$) concentrates residual mass
+> in the post window (share 0.79–0.96), while lowering it (positive $h_0$)
+> lets the full-window refit spread misfit across the window (share ≈ 0.48),
+> keeping the post block unexceptional among cyclic shifts. Near
+> $h_0 \approx$ `att_` the same geometry rejects the truth: the refit drives
+> the pre-window residuals to near zero while the post window keeps genuine
+> dispersion, so the post block ranks first among all $T$ shifts — a local
+> failure of residual exchangeability via pre/post dispersion imbalance.
+> Full analysis in [`methodology.md`](methodology.md) §5.5; pinned by
+> `test_basque_pvalue_curve_matches_r_exact`. I-1 has been removed from
+> `known-issues.md` per that file's convention; **I-2 remains open** (its
+> block side is now exactly verified on this panel by the same test, narrowing
+> it to the `iid` magnitude question).
+
 A second, lower-priority item is tracked as **I-2**: the `block` and `iid`
 schemes give 0.186 vs 0.065 on that panel. The direction is expected (block is
 conservative on autocorrelated series) but the magnitude is unverified, and the
@@ -376,6 +421,8 @@ In descending order of value:
 1. **Resolve I-1** by extending the existing parity harness to compare the whole
    $p(h_0)$ curve against R, not just four points. The machinery already exists;
    this is a loop over an existing test.
+   **Done (2026-07-20)** — see the §6.2 update; property confirmed, exact
+   parity across the curve, pinned in the harness on a second (Basque) fixture.
 2. **Resolve §1.1** — state how the R internal signature was obtained, and
    align the disclosure wording across all three audits. The paper's
    "no R source consulted" claim must be qualified identically everywhere or it
@@ -384,6 +431,11 @@ In descending order of value:
    most likely to draw a reviewer question.
 4. **Add the contiguity assertion from D-6.** Converts an acknowledged
    unverified assumption into a checked one for a few lines of code.
+   **Upgraded (2026-07-20):** no longer a precaution — the Basque acceptance
+   region is non-contiguous (§6.2 update) and the current min/max extraction
+   silently bridges a rejected gap that contains `att_`. Without the
+   assertion/flag, `conformal_interval`'s bounds can be misread as a
+   connected acceptance region.
 5. **Tighten the `iid` parity test** if I-2 is to be closed — a synthetic series
    with analytically known autocorrelation would constrain the block/iid ratio
    far better than the current `0.03` band on real data.
