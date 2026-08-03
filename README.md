@@ -4,7 +4,8 @@ A Python implementation of Augmented Synthetic Control Methods and
 geo-experimentation tooling. Methodologically faithful to the published
 literature, validated against the R reference implementations.
 
-> **Status: pre-alpha.** API is not stable. Do not use in production yet.
+> **Status: alpha.** The estimator API is functional and validated against R,
+> but not yet stable across releases. Pin the exact version in production.
 
 ## What this is
 
@@ -39,8 +40,66 @@ pip install "augsynth-py[validation]"
 ## Quickstart
 
 ```python
-# Coming soon — API still under design.
+import numpy as np
+import polars as pl
+
+from augsynth_py import AugSynth, conformal_pvalue
+
+# Simulated geo panel: 20 markets x 90 days, +10% lift in geo_00 from day 70.
+rng = np.random.default_rng(7)
+days = np.arange(90)
+base = rng.uniform(80, 120, 20)
+trend = rng.normal(0.1, 0.05, 20)
+seasonal = 5 * np.sin(2 * np.pi * days / 7)
+
+panel = pl.concat(
+    pl.DataFrame({
+        "geo": f"geo_{i:02d}",
+        "day": days,
+        "sales": base[i] + trend[i] * days + seasonal + rng.normal(0, 1.0, 90),
+    })
+    for i in range(20)
+).with_columns(
+    pl.when((pl.col("geo") == "geo_00") & (pl.col("day") >= 70))
+    .then(pl.col("sales") * 1.10)
+    .otherwise(pl.col("sales"))
+    .alias("sales")
+)
+
+fit = AugSynth(lambda_=1.0).fit(
+    panel,
+    unit="geo",
+    time="day",
+    outcome="sales",
+    treated="geo_00",
+    treatment_time=70,
+)
+
+print(f"ATT: {fit.att_:.2f} ({fit.att_pct_:+.1%})")
+# ATT: 10.29 (+9.8%)
+
+# The noise in this simulated panel is iid; on real (autocorrelated) series
+# keep the default permutation_type="block".
+p = conformal_pvalue(fit, permutation_type="iid", rng=np.random.default_rng(0))
+print(f"conformal p-value: {p:.4f}")
+# conformal p-value: 0.0120
 ```
+
+What's available today:
+
+- `Synth` — classical simplex-constrained synthetic control
+  (outcome-only form, `augsynth(progfunc = "None", scm = TRUE)` analogue),
+  with optional unit fixed effects.
+- `AugSynth` — ridge-augmented synthetic control (Ben-Michael, Feller &
+  Rothstein 2021), with leave-one-out CV for the ridge penalty by default.
+- `conformal_pvalue` / `conformal_interval` — exact conformal inference for
+  a constant post-period effect (Chernozhukov, Wuthrich & Zhu 2021), block
+  and iid permutation schemes.
+- Multi-treated fits: pass an iterable of units as `treated` to estimate the
+  effect on the treated-group mean.
+
+The GeoLift-style orchestration layer (power analysis, market selection) is
+the next milestone on the roadmap.
 
 ## Methodological references
 

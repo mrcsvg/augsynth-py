@@ -19,13 +19,14 @@ keywords = [
     "econometrics",
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
 ]
 dynamic = ["version"]
 
@@ -65,14 +66,29 @@ docs = [
 ]
 
 [project.urls]
-Repository = "https://github.com/REPLACE_ME/augsynth-py"
-Issues = "https://github.com/REPLACE_ME/augsynth-py/issues"
+Repository = "https://github.com/mrcsvg/augsynth-py"
+Issues = "https://github.com/mrcsvg/augsynth-py/issues"
+Changelog = "https://github.com/mrcsvg/augsynth-py/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/augsynth_py/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/augsynth_py"]
+
+[tool.hatch.build.targets.sdist]
+# Keep the sdist to what a downstream builder/packager needs. papers/ holds
+# ~9 MB of open-access PDFs (reference copies, not ours to redistribute via
+# PyPI) and notebooks/ is exploratory material explicitly not shipped.
+only-include = [
+    "src",
+    "tests",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff: lint + format
