@@ -534,7 +534,11 @@ $p(\texttt{att\_}) = 1/43 < \alpha$, and `att_` lies inside the reported
 bounds only because min/max bridges the rejected gap. Second, on panels like
 this the reported bounds must be read as the **envelope** of a non-contiguous
 acceptance set; the audit's D-6 recommendation (assert/flag contiguity at
-extraction) is thereby upgraded from prudence to demonstrated need. Third,
+extraction) is thereby upgraded from prudence to demonstrated need — and is
+**implemented as of 2026-08-03**: `conformal_interval` now checks that the
+accepted grid points are consecutive and emits a `UserWarning` naming the
+number of interior rejected gaps when they are not, so the envelope can no
+longer be misread silently as a connected interval. Third,
 the Basque interval remains usable as a published illustrative example — the
 entire curve, including the asymmetry, the plateau, and the rejected gap, is
 shared exactly with the R reference — provided the text presents it as the

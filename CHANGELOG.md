@@ -29,6 +29,11 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   residuals.
 - Multi-treated fits: `treated` accepts an iterable of units; the effect is
   estimated on the treated-group mean.
+- `conformal_interval` detects a non-contiguous acceptance region (accepted
+  grid points with interior rejected gaps — demonstrated on the Basque panel,
+  where the gap contains the point estimate itself) and emits a `UserWarning`
+  clarifying that the returned bounds are the conservative min/max envelope
+  (clean-room audit D-6, Recommendation 4).
 - Numerical parity suite against R `augsynth` (`tests/validation_against_r/`),
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.

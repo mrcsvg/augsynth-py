@@ -436,6 +436,13 @@ In descending order of value:
    silently bridges a rejected gap that contains `att_`. Without the
    assertion/flag, `conformal_interval`'s bounds can be misread as a
    connected acceptance region.
+   **Implemented (2026-08-03):** `conformal_interval` now detects
+   non-consecutive accepted grid points and emits a `UserWarning` reporting
+   the number of interior rejected gaps; the returned bounds are explicitly
+   documented as the (conservative) min/max envelope. Covered by
+   `test_non_contiguous_acceptance_region_warns` (stubbed $p(h_0)$ curve) and
+   `test_higher_alpha_narrows_interval` (real panel where the gap occurs at
+   $\alpha = 0.20$) in `tests/unit/test_inference_interval.py`.
 5. **Tighten the `iid` parity test** if I-2 is to be closed — a synthetic series
    with analytically known autocorrelation would constrain the block/iid ratio
    far better than the current `0.03` band on real data.

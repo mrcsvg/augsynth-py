@@ -388,6 +388,18 @@ def conformal_interval(
     which widening cannot fix; here a boundary-reaching region is accepted and
     widening extends it.
 
+    **Non-contiguity warning.** The acceptance region of the refit-under-null
+    test is not guaranteed to be an interval: because the residuals depend on
+    ``h0`` through the refit, ``p(h0)`` can dip below ``alpha`` on a stretch
+    strictly inside the accepted envelope (demonstrated on the Basque panel,
+    where the rejected gap contains ``att_`` itself — identically in R; see
+    ``docs/methodology.md`` §5.5). When the accepted grid points are not
+    consecutive, a :class:`UserWarning` is emitted and the returned ``(min,
+    max)`` envelope *overstates* (never understates) the acceptance region —
+    conservative in direction, but not a connected interval. Under
+    ``permutation_type="iid"`` the same warning can also fire from Monte-Carlo
+    noise at grid points whose p-value sits near ``alpha``.
+
     The sibling ``geolift-py`` package consumes this function to populate
     ``ConfIntervals(method="conformal")``.
 
@@ -425,22 +437,31 @@ def conformal_interval(
     if spread < 1e-6 * scale:
         spread = scale
 
-    def _accepted(lin: NDArray[np.float64]) -> list[float]:
-        """Return the accepted grid points (``0.0`` always evaluated)."""
+    def _accepted(lin: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+        """Score the sorted candidate grid (``0.0`` always evaluated).
+
+        Returns the candidate array and the boolean acceptance mask over it,
+        so the caller can recover both the accepted values and their grid
+        positions (the positions drive the non-contiguity diagnostic).
+        """
         candidates = np.union1d(lin, [0.0])
-        return [
-            float(h0)
-            for h0 in candidates
-            if conformal_pvalue(
-                fit,
-                float(h0),
-                permutation_type=permutation_type,
-                side=side,
-                ns=ns,
-                rng=rng,
-            )
-            >= alpha
-        ]
+        mask = np.fromiter(
+            (
+                conformal_pvalue(
+                    fit,
+                    float(h0),
+                    permutation_type=permutation_type,
+                    side=side,
+                    ns=ns,
+                    rng=rng,
+                )
+                >= alpha
+                for h0 in candidates
+            ),
+            dtype=bool,
+            count=candidates.size,
+        )
+        return candidates, mask
 
     # Test inversion on a finite grid. The grid span is derived from the
     # point-estimate gap_ dispersion, but each point is scored by the
@@ -452,15 +473,19 @@ def conformal_interval(
     # re-score until both endpoints are strictly interior or the cap is hit.
     max_doublings = 8
     truncated = False
-    accepted: list[float] = []
+    accepted_idx = np.empty(0, dtype=np.intp)
+    candidates = np.empty(0, dtype=np.float64)
     for attempt in range(max_doublings + 1):
         lin = np.linspace(center - spread, center + spread, grid_size)
-        accepted = _accepted(lin)
-        if not accepted:
+        candidates, accept_mask = _accepted(lin)
+        if not accept_mask.any():
             # Empty acceptance region: widening cannot recover it (the peak
             # p-value over h0 is below alpha — structural, see Returns).
             return (float("nan"), float("nan"))
-        truncated = (min(accepted) <= float(lin[0])) or (max(accepted) >= float(lin[-1]))
+        accepted_idx = np.flatnonzero(accept_mask)
+        lower = float(candidates[accepted_idx[0]])
+        upper = float(candidates[accepted_idx[-1]])
+        truncated = (lower <= float(lin[0])) or (upper >= float(lin[-1]))
         if not truncated or attempt == max_doublings:
             break
         spread *= 2.0
@@ -476,12 +501,29 @@ def conformal_interval(
             UserWarning,
             stacklevel=2,
         )
-    # min/max recovers the CI because the two-sided acceptance region is
-    # contiguous in practice on exchangeable residuals — this is empirical, not
-    # guaranteed by convexity, since under refit-under-null the residuals
-    # themselves depend on h0 through the refit (so the statistic is not a fixed
-    # convex function of h0). If the accepted set were ever non-contiguous,
-    # min/max would silently fill the interior gap; the boundary-interiority
-    # check above does not detect that. On the iid path Monte-Carlo noise across
-    # grid points can additionally perturb the boundary slightly.
-    return (float(min(accepted)), float(max(accepted)))
+    # min/max recovers the CI only when the two-sided acceptance region is
+    # contiguous — which is empirical, not guaranteed by convexity, since under
+    # refit-under-null the residuals themselves depend on h0 through the refit
+    # (so the statistic is not a fixed convex function of h0). Non-contiguity
+    # occurs on real panels: on the Basque panel a rejected 1/T-floor gap sits
+    # strictly inside the envelope and contains att_ itself, identically in R
+    # (methodology.md §5.5). When that happens the returned bounds are the
+    # min/max ENVELOPE, wider than the true acceptance region (conservative
+    # direction), and the warning below stops them being misread as a
+    # connected region. On the iid path Monte-Carlo noise across grid points
+    # can additionally open spurious single-point gaps.
+    interior_gaps = int(np.count_nonzero(np.diff(accepted_idx) > 1))
+    if interior_gaps > 0:
+        warnings.warn(
+            f"conformal_interval: the acceptance region is non-contiguous at "
+            f"alpha={alpha:g} — {interior_gaps} rejected gap(s) lie strictly "
+            "inside the returned bounds. The bounds are the min/max envelope "
+            "of the accepted grid points and overstate (never understate) the "
+            "true acceptance region; do not read them as a connected interval. "
+            "This is a genuine property of CWZ test inversion on some panels "
+            "(see docs/methodology.md §5.5); under permutation_type='iid' it "
+            "can also be Monte-Carlo noise at grid points with p near alpha.",
+            UserWarning,
+            stacklevel=2,
+        )
+    return (float(candidates[accepted_idx[0]]), float(candidates[accepted_idx[-1]]))

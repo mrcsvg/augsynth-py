@@ -60,7 +60,13 @@ def test_interval_brackets_att():
 def test_higher_alpha_narrows_interval():
     fit = _fit_with_effect(2.0)
     lo05, hi05 = conformal_interval(fit, alpha=0.05, grid_size=81)
-    lo20, hi20 = conformal_interval(fit, alpha=0.20, grid_size=81)
+    # At alpha=0.20 this panel's acceptance region is genuinely non-contiguous:
+    # block p-values are quantized to k/T (T=30) and a k=5 dip (p ~ 0.167)
+    # sits strictly inside the accepted envelope, so the D-6 diagnostic fires.
+    # Deterministic (block scheme, fixed DGP seed) -- a real-panel counterpart
+    # to test_non_contiguous_acceptance_region_warns.
+    with pytest.warns(UserWarning, match="non-contiguous"):
+        lo20, hi20 = conformal_interval(fit, alpha=0.20, grid_size=81)
     # A larger alpha rejects more nulls -> the acceptance region can only shrink.
     assert lo05 <= lo20 and hi20 <= hi05
 
@@ -236,3 +242,56 @@ def test_low_power_interval_expands_past_initial_grid_and_warns():
     # and the interval is vastly wider than the initial +/-6*sd span.
     assert hi > initial_grid_max + 1.0
     assert (hi - lo) > 20.0 * (2.0 * initial_half_span)
+
+
+class _StubFit:
+    # Minimal _FittedSC surface for exercising the interval-extraction layer
+    # with a controlled p(h0) curve. gap_/pre_mask_/att_ place the grid;
+    # _conformal_null_residuals is never reached because conformal_pvalue is
+    # monkeypatched in the tests below.
+    def __init__(self, T=30, t0=20):  # noqa: N803
+        gap = np.zeros(T)
+        gap[t0:] = np.linspace(-1.0, 1.0, T - t0)  # sd ~ 0.6 -> spread ~ 3.7
+        self.gap_ = gap
+        self.pre_mask_ = np.arange(T) < t0
+        self.att_ = float(gap[t0:].mean())
+
+    def _conformal_null_residuals(self, h0):
+        raise AssertionError("must not be called when conformal_pvalue is stubbed")
+
+
+def test_non_contiguous_acceptance_region_warns(monkeypatch):
+    # D-6 (clean-room audit 2026-07-07, Recommendation 4): the acceptance
+    # region of the refit-under-null test can have a rejected gap strictly
+    # inside the accepted envelope (demonstrated on the Basque panel, where
+    # the gap contains att_ itself -- methodology.md 5.5). min/max extraction
+    # must then WARN rather than silently present the envelope as a connected
+    # interval. The p(h0) curve here is stubbed: accepted on [-2,-1] u [1,2],
+    # rejected in between and outside -- the curve itself is pinned against R
+    # by test_basque_pvalue_curve_matches_r_exact.
+    import augsynth_py.inference as inference
+
+    def fake_pvalue(fit, h0=0.0, **kwargs):
+        return 1.0 if 1.0 <= abs(h0) <= 2.0 else 0.0
+
+    monkeypatch.setattr(inference, "conformal_pvalue", fake_pvalue)
+    with pytest.warns(UserWarning, match="non-contiguous"):
+        lo, hi = inference.conformal_interval(_StubFit(), alpha=0.05, grid_size=41)
+    # The envelope brackets both accepted islands (grid resolution ~0.19).
+    assert lo == pytest.approx(-2.0, abs=0.2)
+    assert hi == pytest.approx(2.0, abs=0.2)
+
+
+def test_contiguous_acceptance_region_does_not_warn(monkeypatch):
+    # Complement of the non-contiguity test: a connected accepted run must
+    # return silently (filterwarnings=error in pytest.ini makes any stray
+    # warning fail this test).
+    import augsynth_py.inference as inference
+
+    def fake_pvalue(fit, h0=0.0, **kwargs):
+        return 1.0 if abs(h0) <= 2.0 else 0.0
+
+    monkeypatch.setattr(inference, "conformal_pvalue", fake_pvalue)
+    lo, hi = inference.conformal_interval(_StubFit(), alpha=0.05, grid_size=41)
+    assert lo == pytest.approx(-2.0, abs=0.2)
+    assert hi == pytest.approx(2.0, abs=0.2)
