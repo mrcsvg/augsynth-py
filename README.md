@@ -53,11 +53,13 @@ trend = rng.normal(0.1, 0.05, 20)
 seasonal = 5 * np.sin(2 * np.pi * days / 7)
 
 panel = pl.concat(
-    pl.DataFrame({
-        "geo": f"geo_{i:02d}",
-        "day": days,
-        "sales": base[i] + trend[i] * days + seasonal + rng.normal(0, 1.0, 90),
-    })
+    pl.DataFrame(
+        {
+            "geo": f"geo_{i:02d}",
+            "day": days,
+            "sales": base[i] + trend[i] * days + seasonal + rng.normal(0, 1.0, 90),
+        }
+    )
     for i in range(20)
 ).with_columns(
     pl.when((pl.col("geo") == "geo_00") & (pl.col("day") >= 70))

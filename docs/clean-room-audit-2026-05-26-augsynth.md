@@ -319,8 +319,10 @@ parity test.
 
 ```python
 assert_array_close(
-    est.ridge_correction_, r_ridge_correction,
-    atol=1e-2, rtol=1e-4,
+    est.ridge_correction_,
+    r_ridge_correction,
+    atol=1e-2,
+    rtol=1e-4,
     name=f"ridge correction path (lambda_mult={lambda_multiplier})",
 )
 ```

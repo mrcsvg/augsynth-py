@@ -45,14 +45,19 @@ import numpy as np, polars as pl
 from augsynth_py import Synth, conformal_pvalue
 
 bq = pl.read_csv("notebooks/_data/basque_ag2003.csv").filter(
-    pl.col("regionname") != "Spain (Espana)")
+    pl.col("regionname") != "Spain (Espana)"
+)
 fit = Synth(fixedeff=False).fit(
-    bq, unit="regionname", time="year", outcome="gdpcap",
-    treated="Basque Country (Pais Vasco)", treatment_time=1975)
+    bq,
+    unit="regionname",
+    time="year",
+    outcome="gdpcap",
+    treated="Basque Country (Pais Vasco)",
+    treatment_time=1975,
+)
 
 for pt in ("block", "iid"):
-    print(pt, conformal_pvalue(fit, permutation_type=pt,
-                               rng=np.random.default_rng(42)))
+    print(pt, conformal_pvalue(fit, permutation_type=pt, rng=np.random.default_rng(42)))
 ```
 
 **Expected direction, unverified magnitude.** The moving-block scheme preserves
