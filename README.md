@@ -1,0 +1,137 @@
+# augsynth-py
+
+A Python implementation of Augmented Synthetic Control Methods and
+geo-experimentation tooling. Methodologically faithful to the published
+literature, validated against the R reference implementations.
+
+> **Status: alpha.** The estimator API is functional and validated against R,
+> but not yet stable across releases. Pin the exact version in production.
+
+## What this is
+
+Synthetic control methods for causal inference, with a focus on the use case
+that matters most in modern marketing science: measuring the lift of geo-level
+ad campaigns. The roadmap targets feature parity with:
+
+- The R [`augsynth`](https://github.com/ebenmichael/augsynth) package
+  (estimators).
+- Meta's R [`GeoLift`](https://github.com/facebookincubator/GeoLift) package
+  (orchestration: power analysis, market selection, multi-cell).
+
+## Why another synthetic control package
+
+There are good Python options for parts of this problem (`CausalPy`,
+`pysyncon`, `tfcausalimpact`), but none provides Augmented Synthetic Control
+Methods (Ben-Michael, Feller & Rothstein 2021) together with the
+GeoLift-style orchestration layer in a single Python-native package.
+
+## Installation
+
+```bash
+pip install augsynth-py
+```
+
+For the validation test suite (requires R and the `augsynth` R package):
+
+```bash
+pip install "augsynth-py[validation]"
+```
+
+## Quickstart
+
+```python
+import numpy as np
+import polars as pl
+
+from augsynth_py import AugSynth, conformal_pvalue
+
+# Simulated geo panel: 20 markets x 90 days, +10% lift in geo_00 from day 70.
+rng = np.random.default_rng(7)
+days = np.arange(90)
+base = rng.uniform(80, 120, 20)
+trend = rng.normal(0.1, 0.05, 20)
+seasonal = 5 * np.sin(2 * np.pi * days / 7)
+
+panel = pl.concat(
+    pl.DataFrame(
+        {
+            "geo": f"geo_{i:02d}",
+            "day": days,
+            "sales": base[i] + trend[i] * days + seasonal + rng.normal(0, 1.0, 90),
+        }
+    )
+    for i in range(20)
+).with_columns(
+    pl.when((pl.col("geo") == "geo_00") & (pl.col("day") >= 70))
+    .then(pl.col("sales") * 1.10)
+    .otherwise(pl.col("sales"))
+    .alias("sales")
+)
+
+fit = AugSynth(lambda_=1.0).fit(
+    panel,
+    unit="geo",
+    time="day",
+    outcome="sales",
+    treated="geo_00",
+    treatment_time=70,
+)
+
+print(f"ATT: {fit.att_:.2f} ({fit.att_pct_:+.1%})")
+# ATT: 10.29 (+9.8%)
+
+# The noise in this simulated panel is iid; on real (autocorrelated) series
+# keep the default permutation_type="block".
+p = conformal_pvalue(fit, permutation_type="iid", rng=np.random.default_rng(0))
+print(f"conformal p-value: {p:.4f}")
+# conformal p-value: 0.0120
+```
+
+What's available today:
+
+- `Synth` — classical simplex-constrained synthetic control
+  (outcome-only form, `augsynth(progfunc = "None", scm = TRUE)` analogue),
+  with optional unit fixed effects.
+- `AugSynth` — ridge-augmented synthetic control (Ben-Michael, Feller &
+  Rothstein 2021), with leave-one-out CV for the ridge penalty by default.
+- `conformal_pvalue` / `conformal_interval` — exact conformal inference for
+  a constant post-period effect (Chernozhukov, Wuthrich & Zhu 2021), block
+  and iid permutation schemes.
+- Multi-treated fits: pass an iterable of units as `treated` to estimate the
+  effect on the treated-group mean.
+
+The GeoLift-style orchestration layer (power analysis, market selection) is
+the next milestone on the roadmap.
+
+## Methodological references
+
+The implementation is based on the published literature, not translated from
+the R sources. Key references:
+
+- Abadie, Diamond & Hainmueller (2010). Synthetic Control Methods for
+  Comparative Case Studies. *JASA*.
+- Ben-Michael, Feller & Rothstein (2021). The Augmented Synthetic Control
+  Method. *JASA*.
+- Xu (2017). Generalized Synthetic Control Method. *Political Analysis*.
+- Chernozhukov, Wuthrich & Zhu (2021). An Exact and Robust Conformal Inference
+  Method for Counterfactual and Synthetic Controls. *JASA*.
+
+See `docs/methodology.md` for the mapping between code and equations.
+
+## Validation against R
+
+Every estimator in this package is validated numerically against the R
+reference implementation. The validation suite lives in
+`tests/validation_against_r/` and runs as a separate CI job.
+
+If you find a discrepancy with the R output beyond documented tolerances,
+please open an issue — that is a bug.
+
+## Contributing
+
+Read [`CLAUDE.md`](CLAUDE.md) first. It contains the architectural decisions,
+coding conventions, and the validation rule that PRs must satisfy.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

@@ -1,0 +1,176 @@
+# augsynth-py
+
+A Python implementation of Augmented Synthetic Control Methods (ASCM) and related
+geo-experimentation methodology. The end goal is feature parity with the R
+`augsynth` package and a higher-level orchestration layer comparable to Meta's
+GeoLift (R).
+
+This file is the entry point for AI coding assistants working on this repo.
+Read it before starting any task.
+
+---
+
+## Project goal
+
+Provide a Python-native, methodologically faithful implementation of:
+
+1. Classical synthetic control (Abadie, Diamond & Hainmueller, 2010).
+2. Augmented synthetic control with ridge augmentation (Ben-Michael, Feller & Rothstein, 2021).
+3. Generalized synthetic control (Xu, 2017).
+4. Power analysis and market selection for geo-experiments (the orchestration
+   layer that GeoLift provides on top of `augsynth`).
+
+The package must be usable in production data science workflows. Methodology
+correctness is the top priority, performance is secondary, ergonomics third.
+
+## Implementation strategy: clean-room from papers
+
+All algorithms are implemented **from the published papers**, not by translating
+the R `augsynth` source code. This keeps the project under a permissive license
+(MIT) and forces a deeper understanding of the methods.
+
+Reference implementations in R (`augsynth`, `gsynth`, `Synth`, `GeoLift`) are
+used **only as oracles for validation tests**, never as a source to translate
+from. Do not copy R source code into this repo.
+
+## Canonical references
+
+The implementation must be traceable to these papers. New code should cite the
+relevant paper and equation in docstrings.
+
+- Abadie, Diamond & Hainmueller (2010). *Synthetic Control Methods for
+  Comparative Case Studies*. JASA.
+- Abadie (2021). *Using Synthetic Controls: Feasibility, Data Requirements,
+  and Methodological Aspects*. JEL.
+- Ben-Michael, Feller & Rothstein (2021). *The Augmented Synthetic Control
+  Method*. JASA.
+- Xu (2017). *Generalized Synthetic Control Method*. Political Analysis.
+- Doudchenko & Imbens (2016). *Balancing, Regression, Difference-in-Differences
+  and Synthetic Control Methods: A Synthesis*. NBER WP 22791.
+- Chernozhukov, Wuthrich & Zhu (2021). *An Exact and Robust Conformal Inference
+  Method for Counterfactual and Synthetic Controls*. JASA.
+
+## Architectural decisions (already made — do not relitigate without reason)
+
+| Concern              | Choice                            | Why                                                    |
+|----------------------|-----------------------------------|--------------------------------------------------------|
+| Language             | Python 3.11+                      | Practical adoption, scientific ecosystem               |
+| Numerics             | `numpy`, `scipy`                  | Native BLAS/LAPACK, stable APIs                        |
+| Convex optimization  | `cvxpy` (OSQP / Clarabel backends)| Cleanest expression of constrained QPs                 |
+| Tabular data         | `polars`                          | Fast, sane API, scales to panel datasets               |
+| Parallelism          | `joblib`                          | Power analysis is embarrassingly parallel              |
+| Build backend        | `hatchling`                       | Modern, simple, PEP 621 native                         |
+| Layout               | `src/` layout                     | Avoids accidental imports during testing               |
+| Lint + format        | `ruff`                            | One tool, fast                                         |
+| Type checking        | `mypy --strict` on `src/`         | Catch shape/contract bugs early                        |
+| Tests                | `pytest`                          | Standard                                               |
+| Validation oracle    | R `augsynth` via `rpy2`           | Ground truth for parity tests                          |
+
+**Do not introduce new dependencies without justification in the PR.**
+**Do not reach for Rust/C extensions before profiling identifies a real hot
+loop.** This is a project rule, not a suggestion. Premature optimization in a
+foreign language has killed similar projects.
+
+## Validation rule (non-negotiable)
+
+Every public estimator must have at least one test in
+`tests/validation_against_r/` that:
+
+1. Runs the same input through both the Python implementation and the R
+   reference (`augsynth` / `gsynth` / `Synth`) via `rpy2`.
+2. Asserts numerical agreement on weights, counterfactuals, and ATT estimates
+   within a documented tolerance (default `atol=1e-6, rtol=1e-5`; relax with
+   justification only).
+3. Uses a fixture from the `GeoLift_PreTest` panel (40 US cities, 90 days)
+   loaded once per session.
+
+PRs that add a new estimator without a parity test should be rejected.
+
+## Out of scope for the v0.2 MVP
+
+- AugSynth with auxiliary covariates / predictors $X_i$ — deferred per
+  [R-1.1](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-11--augsynth-with-auxiliary-covariates--predictors-x_i).
+- Matrix-completion augmentation (Athey et al. 2021) — deferred per
+  [R-1.2](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-12--matrix-completion-augmentation-athey-et-al-2021).
+- BFR 2021 §4 GSC augmentation (Xu 2017 / gsynth) — deferred per
+  [R-1.3](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-13--bfr-2021-4-gsc-augmentation-xu-2017--gsynth).
+- Multi-cell experiments — defer to v0.3.
+- Bayesian variants — out of scope, that's CausalPy's territory.
+- GPU acceleration — not needed.
+- Rust extensions — not needed, see above.
+
+## Repository layout
+
+```
+augsynth-py/
+├── CLAUDE.md                       <- you are here
+├── README.md
+├── LICENSE                         <- MIT
+├── pyproject.toml
+├── src/augsynth_py/
+│   ├── __init__.py
+│   ├── _version.py
+│   └── synth/                      <- estimator implementations
+├── tests/
+│   ├── conftest.py                 <- shared fixtures
+│   ├── unit/                       <- pure-Python unit tests, no R required
+│   └── validation_against_r/       <- parity tests, require R + augsynth
+├── docs/
+│   └── methodology.md              <- maps code to paper sections/equations
+├── notebooks/                      <- exploratory notebooks, not shipped
+└── .github/workflows/
+    ├── ci.yml                      <- lint, type, unit tests
+    └── validation.yml              <- parity tests against R
+```
+
+## Code conventions
+
+- Type hints everywhere in `src/`. Public APIs use `numpy.typing.NDArray` for
+  arrays.
+- Docstrings: NumPy style. Every public function cites paper + equation when
+  implementing a known method.
+- No `print()` in library code. Use the `logging` module at INFO/DEBUG.
+- No global mutable state. Estimators are classes with `fit()` / `predict()`.
+- Random seeds: every stochastic function takes `rng: np.random.Generator`,
+  never reads global state.
+- Errors: raise `ValueError` for bad input, custom exceptions in
+  `augsynth_py.exceptions` for domain errors.
+
+## Testing conventions
+
+- `tests/unit/` runs in CI on every push, no R required.
+- `tests/validation_against_r/` runs in a separate CI job that installs R
+  and the reference packages. Use `pytest.importorskip("rpy2")` so local
+  developers without R can still run the unit suite.
+- Test data fixtures live in `tests/fixtures/` (not yet created — add when
+  first parity test lands).
+- Snapshot tests for plotting outputs are NOT used; we test data, not pixels.
+
+## Common task recipes
+
+### Adding a new estimator
+
+1. Create `src/augsynth_py/synth/<name>.py` with a class implementing `fit` and
+   `predict`.
+2. Cite the paper and equation in the class docstring.
+3. Add unit tests in `tests/unit/test_<name>.py` covering edge cases (single
+   treated unit, perfect pre-period fit, degenerate donor pool).
+4. Add a parity test in `tests/validation_against_r/test_<name>.py` against the
+   R reference.
+5. Document the estimator in `docs/methodology.md` with the mapping to paper
+   sections.
+6. Export from `src/augsynth_py/__init__.py`.
+
+### Updating dependencies
+
+- Edit `pyproject.toml`, not `requirements.txt` (we don't have one).
+- Justify the dependency in the PR description.
+- Prefer `scipy` / `numpy` primitives over new packages.
+
+## Things to confirm with the maintainer before doing
+
+- Adding a dependency.
+- Changing the public API of any class already exported from `__init__.py`.
+- Relaxing a validation tolerance.
+- Adding a Rust / Cython / C extension.
+- Adding GPU support.
