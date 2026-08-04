@@ -24,6 +24,7 @@ See `methodology.md` §5.5, the 2026-07-20 updates in
 ## I-2 — Block and iid permutation schemes disagree substantially
 
 **Status:** open, probably expected behaviour but unquantified. Opened 2026-07-07.
+Tracked publicly as [issue #4](https://github.com/mrcsvg/augsynth-py/issues/4).
 **Module:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py) — `conformal_pvalue`.
 
 **Observed.** On the Abadie & Gardeazabal (2003) Basque panel — classical
