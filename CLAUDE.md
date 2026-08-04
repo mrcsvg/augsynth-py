@@ -86,16 +86,35 @@ Every public estimator must have at least one test in
 
 PRs that add a new estimator without a parity test should be rejected.
 
-## Out of scope for the v0.2 MVP
+## Roadmap and scope
 
-- AugSynth with auxiliary covariates / predictors $X_i$ — deferred per
-  [R-1.1](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-11--augsynth-with-auxiliary-covariates--predictors-x_i).
-- Matrix-completion augmentation (Athey et al. 2021) — deferred per
-  [R-1.2](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-12--matrix-completion-augmentation-athey-et-al-2021).
-- BFR 2021 §4 GSC augmentation (Xu 2017 / gsynth) — deferred per
-  [R-1.3](docs/plans/2026-05-16-augsynth-v0.2-design.md#r-13--bfr-2021-4-gsc-augmentation-xu-2017--gsynth).
-- Multi-cell experiments — defer to v0.3.
-- Bayesian variants — out of scope, that's CausalPy's territory.
+Shipped so far: classical `Synth` (v0.1), ridge-augmented `AugSynth` with
+LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3) — each with unit +
+R-parity tests and a clean-room audit in `docs/`.
+
+Critical path toward end-to-end geo-experiments (the project's reason to
+exist), in order:
+
+1. **v0.4 — power analysis / MDE** (`augsynth_py.power`): effect injection +
+   refit + detection rate via conformal inference; parallel grid with joblib.
+   Parity oracle: `GeoLiftPower`.
+2. **v0.5 — market selection**: candidate ranking over treatment sets ×
+   durations, `GeoLiftMarketSelection` analogue. Completes the single-cell
+   GeoLift flow.
+3. **v0.6+ — multi-cell experiments**; then, if demand appears, auxiliary
+   covariates $X_i$ and GSC (Xu 2017, incl. BFR 2021 §4 augmentation).
+
+Deferred until further notice (do not start without maintainer sign-off):
+
+- AugSynth with auxiliary covariates / predictors $X_i$ — needs `Synth`
+  predictor support first.
+- Matrix-completion augmentation (Athey et al. 2021) — would land as a
+  sibling estimator.
+- GSC / gsynth (Xu 2017) and BFR 2021 §4 GSC augmentation.
+
+Permanently out of scope:
+
+- Bayesian variants — that's CausalPy's territory.
 - GPU acceleration — not needed.
 - Rust extensions — not needed, see above.
 
@@ -105,22 +124,32 @@ PRs that add a new estimator without a parity test should be rejected.
 augsynth-py/
 ├── CLAUDE.md                       <- you are here
 ├── README.md
+├── CHANGELOG.md                    <- Keep a Changelog format
 ├── LICENSE                         <- MIT
 ├── pyproject.toml
 ├── src/augsynth_py/
-│   ├── __init__.py
-│   ├── _version.py
+│   ├── __init__.py                 <- public exports
+│   ├── _version.py                 <- single source of truth for the version
+│   ├── exceptions.py               <- domain exceptions
+│   ├── inference.py                <- conformal inference (CWZ 2021)
+│   ├── py.typed                    <- PEP 561 marker
 │   └── synth/                      <- estimator implementations
 ├── tests/
 │   ├── conftest.py                 <- shared fixtures
 │   ├── unit/                       <- pure-Python unit tests, no R required
 │   └── validation_against_r/       <- parity tests, require R + augsynth
 ├── docs/
-│   └── methodology.md              <- maps code to paper sections/equations
+│   ├── methodology.md              <- maps code to paper sections/equations
+│   ├── known-issues.md             <- open investigations register
+│   ├── releasing.md                <- PyPI release runbook
+│   └── clean-room-audit-*.md       <- one audit per estimator/module
+├── papers/
+│   └── SOURCES.md                  <- link index (PDFs are not tracked)
 ├── notebooks/                      <- exploratory notebooks, not shipped
 └── .github/workflows/
     ├── ci.yml                      <- lint, type, unit tests
-    └── validation.yml              <- parity tests against R
+    ├── validation.yml              <- parity tests against R
+    └── release.yml                 <- tag-triggered PyPI trusted publishing
 ```
 
 ## Code conventions
@@ -130,7 +159,10 @@ augsynth-py/
 - Docstrings: NumPy style. Every public function cites paper + equation when
   implementing a known method.
 - No `print()` in library code. Use the `logging` module at INFO/DEBUG.
-- No global mutable state. Estimators are classes with `fit()` / `predict()`.
+- No global mutable state. Estimators are classes with `fit()` populating
+  trailing-underscore fitted attributes (`att_`, `weights_`, ...); a separate
+  `predict()` has not been needed so far — introduce one only with maintainer
+  sign-off on the API shape.
 - Random seeds: every stochastic function takes `rng: np.random.Generator`,
   never reads global state.
 - Errors: raise `ValueError` for bad input, custom exceptions in
@@ -142,8 +174,11 @@ augsynth-py/
 - `tests/validation_against_r/` runs in a separate CI job that installs R
   and the reference packages. Use `pytest.importorskip("rpy2")` so local
   developers without R can still run the unit suite.
-- Test data fixtures live in `tests/fixtures/` (not yet created — add when
-  first parity test lands).
+- Parity fixtures are loaded from the R packages themselves via `rpy2`
+  (`GeoLift_PreTest` in `tests/validation_against_r/conftest.py`) or from
+  public CSVs under `notebooks/_data/` (Basque panel). There is no
+  `tests/fixtures/` directory today; create one only if a fixture cannot
+  live in either of those places.
 - Snapshot tests for plotting outputs are NOT used; we test data, not pixels.
 
 ## Common task recipes
