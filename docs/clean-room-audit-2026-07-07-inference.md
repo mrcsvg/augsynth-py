@@ -39,6 +39,13 @@ against R.
 > `test_basque_pvalue_curve_matches_r_exact` in the parity harness. The §1.1
 > disclosure condition in §6.1 is unaffected and remains open.
 
+> **Update (2026-08-04).** The §1.1 disclosure is also resolved: the
+> maintainer confirmed the R source was not read (see §1.1), so the verdict's
+> condition is met and the clean-room phrasing applies unqualified. The D-6
+> contiguity flag (Recommendation 4) was implemented the day before; with
+> that, every actionable item of this audit is closed and only I-2
+> (`known-issues.md`) remains open as a quantification question.
+
 ---
 
 ## 1. What "clean-room" means in this project
@@ -74,13 +81,22 @@ from the code alone whether the R **source** was read to obtain the argument
 signature and semantics, or whether these were obtained from R's help/namespace
 listing.
 
-**{{Maintainer to confirm}}:** how the internal signature was obtained. The
-precedent is the `AugSynth` audit (§"Honest disclosure"), which records that R
-source inspection *was* authorised during M4 debugging. If the same happened
-here, say so in the same place. This does not invalidate the clean-room claim
-for the *algorithm* — which traces to CWZ 2021 §3 independently, see §3 — but
-the paper's blanket "no R source consulted" phrasing must be qualified
-consistently across all three audits.
+**Resolved (2026-08-04) — maintainer confirmed: the R source was not read.**
+The internal function name and its argument semantics were obtained without
+consulting `augsynth`'s source code (namespace/help-level surface only). The
+conformal-inference module therefore keeps the *strict* clean-room stance of
+the v0.1 `Synth` audit — "no R source consulted" holds without qualification.
+The cross-audit alignment requested by Recommendation 2 is now:
+
+- **`Synth` (v0.1):** no R source consulted — unqualified.
+- **`AugSynth` (v0.2):** R source inspected once, scoped and disclosed
+  (M4 period-demeaning diagnosis, `fit_ridgeaug_formatted`); not translated.
+- **Conformal inference (v0.3):** no R source consulted — unqualified;
+  internal R functions are *called* as a stronger oracle, which is oracle
+  use, not source consultation.
+
+Any blanket "no R source consulted" phrasing in the paper must therefore be
+qualified for `AugSynth` only.
 
 ---
 
@@ -356,7 +372,9 @@ methodological choice (D-3) that needs surfacing rather than fixing.
 
 The phrasing "clean-room implementation" may be used for the conformal
 inference module, **subject to the §1.1 disclosure being resolved consistently
-with the `AugSynth` audit**.
+with the `AugSynth` audit**. *(Update 2026-08-04: resolved — the maintainer
+confirmed no R source was read; see §1.1. The condition is met and the
+clean-room phrasing applies unqualified.)*
 
 ### 6.2 Open question blocking an unconditional PASS
 
@@ -427,6 +445,9 @@ In descending order of value:
    align the disclosure wording across all three audits. The paper's
    "no R source consulted" claim must be qualified identically everywhere or it
    is a credibility risk.
+   **Done (2026-08-04)** — maintainer confirmed the R source was not read;
+   §1.1 now records the resolution and the per-audit alignment (qualification
+   needed for `AugSynth` only).
 3. **State D-3 in the paper.** Holding λ fixed under the null is the deviation
    most likely to draw a reviewer question.
 4. **Add the contiguity assertion from D-6.** Converts an acknowledged
