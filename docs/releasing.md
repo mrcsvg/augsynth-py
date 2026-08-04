@@ -55,9 +55,10 @@ OIDC (trusted publishing).
 - Tag ↔ `_version.py` agreement (release workflow, build job).
 - `twine check --strict` on both sdist and wheel.
 - sdist contents are restricted via `[tool.hatch.build.targets.sdist]`
-  `only-include` in `pyproject.toml` — in particular `papers/` (~9 MB of
-  reference PDFs) and `notebooks/` are excluded. If you add top-level
-  directories that belong in the sdist, extend that list.
+  `only-include` in `pyproject.toml` — in particular `notebooks/` and
+  `papers/` are excluded (paper PDFs are not tracked in git at all; see
+  `papers/SOURCES.md`). If you add top-level directories that belong in the
+  sdist, extend that list.
 
 ## Versioning policy
 

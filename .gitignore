@@ -86,3 +86,6 @@ paper/
 
 # Git worktrees (local isolated workspaces)
 .worktrees/
+
+# papers/: only SOURCES.md is tracked; keep local reading copies untracked
+papers/*.pdf
