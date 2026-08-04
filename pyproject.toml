@@ -77,9 +77,9 @@ path = "src/augsynth_py/_version.py"
 packages = ["src/augsynth_py"]
 
 [tool.hatch.build.targets.sdist]
-# Keep the sdist to what a downstream builder/packager needs. papers/ holds
-# ~9 MB of open-access PDFs (reference copies, not ours to redistribute via
-# PyPI) and notebooks/ is exploratory material explicitly not shipped.
+# Keep the sdist to what a downstream builder/packager needs; notebooks/ is
+# exploratory material explicitly not shipped, and papers/ carries only a
+# link index (PDFs are untracked local reading copies, see papers/SOURCES.md).
 only-include = [
     "src",
     "tests",
