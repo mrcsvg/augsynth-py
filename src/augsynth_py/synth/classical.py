@@ -22,6 +22,7 @@ Doudchenko, N., & Imbens, G. W. (2016). Balancing, Regression,
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 import cvxpy as cp
@@ -111,7 +112,7 @@ class Synth:
         unit: str,
         time: str,
         outcome: str,
-        treated: Any,
+        treated: Any | Iterable[Any],
         treatment_time: Any,
     ) -> Synth:
         """Fit donor weights and compute the counterfactual path.
@@ -129,8 +130,15 @@ class Synth:
             from the donor pool (see
             :func:`augsynth_py.synth._panel.long_to_wide`). ``actual_``,
             ``synthetic_``, ``att_``, and ``att_pct_`` then refer to the
-            treated-group mean. Typed ``Any`` because polars unit values are
-            heterogeneous (str, int, date, ...).
+            treated-group mean. Any iterable works — ``list``, ``tuple``,
+            ``set``, ``np.ndarray``, ``pl.Series`` — except ``str``/``bytes``,
+            which are read as a single unit value rather than as a sequence of
+            characters.
+
+            The scalar arm is ``Any`` because polars unit values are
+            heterogeneous (str, int, date, ...), which makes the annotation
+            collapse to ``Any`` for a type checker: it documents the group form
+            in the signature itself, it does not enforce it.
         treatment_time
             First period considered post-treatment. Rows with ``time <
             treatment_time`` form the pre-period used for fitting.

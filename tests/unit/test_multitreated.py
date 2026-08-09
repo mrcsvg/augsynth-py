@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import polars as pl
+import pytest
 
 from augsynth_py import AugSynth, Synth
 
@@ -82,6 +85,47 @@ def test_synth_multitreated_order_invariant() -> None:
     )
     assert a.units_[0] == b.units_[0] == "u0,u1"
     np.testing.assert_allclose(a.synthetic_, b.synthetic_)
+
+
+@pytest.mark.parametrize(
+    "make_treated",
+    [
+        pytest.param(lambda m: list(m), id="list"),
+        pytest.param(lambda m: tuple(m), id="tuple"),
+        pytest.param(lambda m: set(m), id="set"),
+        pytest.param(lambda m: frozenset(m), id="frozenset"),
+        pytest.param(lambda m: np.array(m), id="ndarray"),
+        pytest.param(lambda m: pl.Series(m), id="series"),
+        pytest.param(lambda m: (x for x in m), id="generator"),
+    ],
+)
+@pytest.mark.parametrize("estimator", [Synth, AugSynth])
+def test_any_iterable_designates_the_same_treated_group(
+    make_treated: Callable[[list[str]], object],
+    estimator: type[Synth] | type[AugSynth],
+) -> None:
+    """Every iterable container names the same group — not just `list`.
+
+    Guards the reported-but-not-reproducible claim that `treated` accepts only a
+    single unit. `str`/`bytes` are deliberately excluded: they are scalars here,
+    covered by `test_synth_list_of_one_equals_scalar`.
+    """
+    panel = _make_panel()
+    members = ["u0", "u1"]
+    kwargs = {} if estimator is Synth else {"lambda_": 1.0}
+
+    est = estimator(fixedeff=True, **kwargs).fit(  # type: ignore[arg-type]
+        panel,
+        unit="unit",
+        time="time",
+        outcome="Y",
+        treated=make_treated(members),
+        treatment_time=8,
+    )
+
+    assert est.units_[0] == "u0,u1"
+    np.testing.assert_allclose(est.actual_, _group_mean(panel, members))
+    assert "u0" not in est.weights_ and "u1" not in est.weights_
 
 
 def test_augsynth_multitreated_runs_and_excludes_treated_from_donors() -> None:

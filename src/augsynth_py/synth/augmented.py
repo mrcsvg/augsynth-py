@@ -23,6 +23,7 @@ Ben-Michael, E., Feller, A., & Rothstein, J. (2021). The Augmented Synthetic
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -209,7 +210,7 @@ def _fit_at_lambda(
     unit: str,
     time: str,
     outcome: str,
-    treated: Any,
+    treated: Any | Iterable[Any],
     treatment_time: Any,
     lambda_: float,
     fixedeff: bool = True,
@@ -548,13 +549,14 @@ class AugSynth:
         unit: str,
         time: str,
         outcome: str,
-        treated: Any,
+        treated: Any | Iterable[Any],
         treatment_time: Any,
     ) -> AugSynth:
         """Fit AugSynth on a long-format panel.
 
         Parameters mirror :meth:`Synth.fit`, including the ``treated``
-        semantics: a unit value, or an iterable of unit values designating a
+        semantics: a unit value, or an iterable of unit values (``list``,
+        ``tuple``, ``set``, ``np.ndarray``, ``pl.Series``) designating a
         treated *group* that is collapsed to its elementwise mean and
         excluded from the donor pool. See :meth:`Synth.fit` for the full
         parameter documentation and the class docstring for the attribute

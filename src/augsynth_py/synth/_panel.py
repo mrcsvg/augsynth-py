@@ -28,7 +28,7 @@ def long_to_wide(
     unit: str,
     time: str,
     outcome: str,
-    treated: Any,
+    treated: Any | Iterable[Any],
 ) -> tuple[NDArray[np.float64], list[str], NDArray[Any], int]:
     """Reshape a long panel into a ``(T, N)`` outcome matrix.
 
