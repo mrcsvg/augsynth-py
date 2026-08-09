@@ -30,15 +30,35 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+# Floors are kept deliberately low and no upper caps are declared, so that
+# augsynth-py can be co-installed into analytics environments that are still
+# pinned to the numpy 1.x ABI (econml, cosmos-gcp, tslearn/numba, ...). Every
+# floor below is exercised by the "oldest supported dependencies" CI job; see
+# docs/compatibility.md for the reasoning behind each one.
 dependencies = [
+    # numpy 1.x and 2.x are both supported: src/ uses no numpy 2-only API, and
+    # `mypy --strict` is clean against both stub generations.
     "numpy>=1.26",
     "scipy>=1.12",
-    "cvxpy>=1.5",
+    # Not >=1.5. cvxpy 1.4.1 already ships the CLARABEL solver that
+    # synth/classical.py targets, and a low floor is what lets a downstream
+    # constraint such as cvxpy<1.5 resolve at all. Leaving the upper end open
+    # is safe on its own but note that cvxpy>=1.8 requires numpy>=2 — the
+    # `numpy1` extra caps it for environments that cannot make that jump.
+    "cvxpy>=1.4.1",
     "polars>=1.0",
     "joblib>=1.3",
 ]
 
 [project.optional-dependencies]
+numpy1 = [
+    # Resolve the dependency set against the numpy 1.x ABI, for environments
+    # shared with libraries that cannot move to numpy 2 yet.
+    # cvxpy 1.8.0 is the first release to require numpy>=2.0.0, so the cap sits
+    # just below it rather than in the base dependencies above.
+    "numpy>=1.26,<2",
+    "cvxpy>=1.4.1,<1.8",
+]
 validation = [
     # Required to run tests/validation_against_r/.
     # Also requires R (>=4.5) and the augsynth R package installed on the system.

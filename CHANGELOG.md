@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `numpy1` optional-dependency extra (`pip install "augsynth-py[numpy1]"`),
+  resolving the dependency set against the numpy 1.x ABI for environments
+  shared with libraries that cannot move to numpy 2 yet.
+- `docs/compatibility.md`: supported dependency ranges, the cvxpy/numpy version
+  boundary, and the constraints-file recipe for co-installing augsynth-py into
+  an already-pinned environment.
+- CI job `unit-tests-min-deps`, running the unit suite against the exact
+  declared dependency floors on Python 3.11.
+
+### Changed
+
+- Lowered the `cvxpy` floor from `>=1.5` to `>=1.4.1`. cvxpy 1.4.1 already
+  ships the CLARABEL solver `Synth` targets, and the previous floor made
+  augsynth-py uninstallable alongside a `cvxpy<1.5` pin. Because cvxpy >= 1.8
+  requires `numpy>=2.0.0`, the old floor also pulled numpy 2 into environments
+  that were pinned to numpy 1.x.
+
 ## [0.3.0] - 2026-08-03
 
 First public release on PyPI. Everything below is new in the sense that no
