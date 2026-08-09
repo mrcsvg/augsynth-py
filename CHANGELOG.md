@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-09
+
+Packaging and documentation only — no estimator behaviour changed, and the
+numerical parity suite against R is unaffected.
+
 ### Added
 
 - `numpy1` optional-dependency extra (`pip install "augsynth-py[numpy1]"`),
@@ -68,5 +73,6 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.
 
-[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.0
