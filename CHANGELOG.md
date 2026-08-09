@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an already-pinned environment.
 - CI job `unit-tests-min-deps`, running the unit suite against the exact
   declared dependency floors on Python 3.11.
+- README section "Treating more than one market", showing the treated-group
+  form of `treated` with a runnable example.
+- Regression test covering every iterable container accepted by `treated`
+  (`list`, `tuple`, `set`, `frozenset`, `np.ndarray`, `pl.Series`, generator)
+  across both estimators.
 
 ### Changed
 
@@ -26,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   augsynth-py uninstallable alongside a `cvxpy<1.5` pin. Because cvxpy >= 1.8
   requires `numpy>=2.0.0`, the old floor also pulled numpy 2 into environments
   that were pinned to numpy 1.x.
+- `treated` is annotated `Any | Iterable[Any]` instead of `Any` on `Synth.fit`,
+  `AugSynth.fit` and `long_to_wide`. No behaviour change — multi-treated fits
+  have worked since 0.3.0 — but neither the signature nor the README quickstart
+  showed that a group was accepted, and it was reported as the feature being
+  missing. The union collapses to `Any` for a type checker: it documents the
+  group form where a reader looks first, it does not enforce it.
 
 ## [0.3.0] - 2026-08-03
 

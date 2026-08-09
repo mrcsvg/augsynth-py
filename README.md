@@ -114,6 +114,39 @@ print(f"conformal p-value: {p:.4f}")
 # conformal p-value: 0.0120
 ```
 
+### Treating more than one market
+
+`treated` takes either a single unit value or any iterable of them — `list`,
+`tuple`, `set`, `np.ndarray`, `pl.Series`. An iterable designates a treated
+*group*: the units are collapsed to their elementwise mean and dropped from the
+donor pool, so `att_` is the effect on that group mean.
+
+```python
+group_fit = AugSynth(lambda_=1.0).fit(
+    panel,
+    unit="geo",
+    time="day",
+    outcome="sales",
+    treated={"geo_00", "geo_01"},  # <- a group, not a single market
+    treatment_time=70,
+)
+
+print(group_fit.units_[0])
+# geo_00,geo_01
+
+print(f"ATT on the group mean: {group_fit.att_:.2f}")
+# ATT on the group mean: 4.83
+# (lower than the 10.29 above because only geo_00 got the lift; geo_01 dilutes it)
+```
+
+`str` and `bytes` are the one exception: they are read as a single unit value,
+not as a sequence of characters. To treat exactly one market, either form works
+(`treated="geo_00"` or `treated=["geo_00"]`).
+
+The aggregate lift across the group is `att_ * n_treated * n_post_periods` —
+`att_` itself stays per-unit-per-period, so it is comparable to a single-market
+fit.
+
 What's available today:
 
 - `Synth` — classical simplex-constrained synthetic control
@@ -125,7 +158,8 @@ What's available today:
   a constant post-period effect (Chernozhukov, Wuthrich & Zhu 2021), block
   and iid permutation schemes.
 - Multi-treated fits: pass an iterable of units as `treated` to estimate the
-  effect on the treated-group mean.
+  effect on the treated-group mean (see
+  [Treating more than one market](#treating-more-than-one-market)).
 
 The GeoLift-style orchestration layer (power analysis, market selection) is
 the next milestone on the roadmap.
