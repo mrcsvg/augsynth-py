@@ -37,6 +37,33 @@ For the validation test suite (requires R and the `augsynth` R package):
 pip install "augsynth-py[validation]"
 ```
 
+### Environments pinned to numpy 1.x
+
+Both numpy 1.26+ and numpy 2.x are supported. When augsynth-py shares an
+environment with libraries that cannot move off numpy 1.x yet (`econml`,
+`tslearn`/`numba`, and similar), install the `numpy1` extra, which resolves the
+dependency set against the last releases built for that ABI:
+
+```bash
+pip install "augsynth-py[numpy1]"
+```
+
+`pip` only reconciles what a single command names, so when augsynth-py is added
+to an environment that already holds such pins, state them explicitly — in the
+same command or through a constraints file:
+
+```bash
+# constraints.txt
+numpy>=1.26.4,<2
+cvxpy>=1.4.1,<1.5
+
+pip install -c constraints.txt augsynth-py
+```
+
+The oldest supported dependency set — numpy 1.26, scipy 1.12, cvxpy 1.4.1,
+polars 1.0, joblib 1.3 on Python 3.11 — runs the unit suite on every push.
+See [`docs/compatibility.md`](docs/compatibility.md) for the full matrix.
+
 ## Quickstart
 
 ```python

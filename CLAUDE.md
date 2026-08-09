@@ -140,6 +140,7 @@ augsynth-py/
 │   └── validation_against_r/       <- parity tests, require R + augsynth
 ├── docs/
 │   ├── methodology.md              <- maps code to paper sections/equations
+│   ├── compatibility.md            <- dependency floors, numpy 1.x/2.x support
 │   ├── known-issues.md             <- open investigations register
 │   ├── releasing.md                <- PyPI release runbook
 │   └── clean-room-audit-*.md       <- one audit per estimator/module
@@ -201,6 +202,10 @@ augsynth-py/
 - Edit `pyproject.toml`, not `requirements.txt` (we don't have one).
 - Justify the dependency in the PR description.
 - Prefer `scipy` / `numpy` primitives over new packages.
+- Keep floors at the oldest release whose API the code actually uses, and keep
+  the base dependencies uncapped — the package must stay co-installable with
+  numpy 1.x environments. A floor change means updating the pins in the
+  `unit-tests-min-deps` CI job too. See `docs/compatibility.md`.
 
 ## Things to confirm with the maintainer before doing
 
