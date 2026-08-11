@@ -377,13 +377,17 @@ def _loo_cv_lambda(
 ) -> tuple[float, NDArray[np.float64]]:
     """Leave-one-out CV over pre-treatment periods (BFR 2021 Section 3.2).
 
-    For each lambda in ``lambda_grid`` and each pre-period ``t``:
+    For each pre-period ``t``:
 
     1. Drop row ``t`` from the donor and treated matrices.
     2. Refit ``omega`` via ``Synth._solve_simplex_qp`` on the T0-1 remaining
-       rows.
-    3. Refit ``gamma`` via :func:`_ridge_augment` on the same rows at this
-       lambda.
+       rows. **This does not depend on lambda**, so it is solved once per
+       fold and reused across the whole grid (see Notes).
+
+    Then, for each lambda in ``lambda_grid`` and each fold ``t``:
+
+    3. Refit ``gamma`` via :func:`_ridge_augment` on the fold's rows at this
+       lambda, reusing the fold's ``omega``.
     4. Predict the held-out outcome: ``y_pre_donors[t] @ (omega + gamma)``.
     5. Accumulate the squared prediction error.
 
@@ -416,6 +420,25 @@ def _loo_cv_lambda(
     ValueError
         If ``lambda_grid`` is empty, or if ``T0 < 3`` (LOO needs at least
         two periods of training data after dropping one).
+
+    Notes
+    -----
+    The simplex fit in step 2 is invariant in ``lambda``:
+    :meth:`Synth._solve_simplex_qp` takes no penalty argument, so a given
+    fold yields the same ``omega`` at every grid point. Solving it inside
+    the grid loop therefore cost ``T0 * len(lambda_grid)`` QP solves where
+    ``T0`` suffice — on a 40-unit, 90-day panel with the 50-point auto-grid,
+    3750 solves instead of 75. Hoisting it is pure caching, not an
+    algorithmic change: it is the same solver on the same inputs, and
+    ``cv_path`` is bit-for-bit identical to the un-hoisted form (see
+    ``test_loo_cv_omega_is_lambda_invariant``).
+
+    The ``gram`` and ``rhs`` matrices inside :func:`_ridge_augment` are
+    lambda-invariant per fold too, but caching them as well measured only
+    ~10% on top of this and would require duplicating the BFR 2021 closed
+    form into this loop — a second home for the formula in a parity-critical
+    module. Not worth it; :func:`_ridge_augment` stays the only place gamma
+    is computed.
     """
     t0 = y_pre_donors.shape[0]
     n_grid = len(lambda_grid)
@@ -435,18 +458,31 @@ def _loo_cv_lambda(
     leave_one_out_donors = [np.delete(y_pre_donors, t, axis=0) for t in range(t0)]
     leave_one_out_treated = [np.delete(y_pre_treated, t, axis=0) for t in range(t0)]
 
+    # The simplex fit carries no lambda, so each fold's omega is the same at
+    # every grid point: solve it once per fold rather than once per
+    # (fold, lambda). See the Notes section -- this is caching, not a change
+    # of algorithm, and cv_path is unchanged bit-for-bit.
+    leave_one_out_omega: list[NDArray[np.float64]] = []
+    for t in range(t0):
+        try:
+            leave_one_out_omega.append(
+                Synth._solve_simplex_qp(leave_one_out_treated[t], leave_one_out_donors[t])
+            )
+        except (RuntimeError, np.linalg.LinAlgError) as exc:
+            raise RuntimeError(f"LOO-CV simplex fit failed at held-out t={t}: {exc}") from exc
+
     for lam_idx in range(n_grid):
         lam = float(lambda_grid[lam_idx])
         total_sq_err = 0.0
         for t in range(t0):
             y0_lo = leave_one_out_donors[t]
             y1_lo = leave_one_out_treated[t]
+            omega_lo = leave_one_out_omega[t]
             try:
-                omega_lo = Synth._solve_simplex_qp(y1_lo, y0_lo)
                 gamma_lo, _ = _ridge_augment(omega_lo, y0_lo, y1_lo, lambda_=lam)
             except (RuntimeError, np.linalg.LinAlgError) as exc:
                 raise RuntimeError(
-                    f"LOO-CV fit failed at lambda={lam:g}, held-out t={t}: {exc}"
+                    f"LOO-CV ridge fit failed at lambda={lam:g}, held-out t={t}: {exc}"
                 ) from exc
             pred = float(y_pre_donors[t] @ (omega_lo + gamma_lo))
             total_sq_err += (float(y_pre_treated[t]) - pred) ** 2

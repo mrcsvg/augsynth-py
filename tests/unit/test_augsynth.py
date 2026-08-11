@@ -437,6 +437,73 @@ def test_loo_cv_returns_argmin_of_grid(rng: np.random.Generator) -> None:
     assert best_lambda == pytest.approx(expected, abs=1e-12)
 
 
+def test_loo_cv_omega_is_lambda_invariant(rng: np.random.Generator) -> None:
+    """Hoisting the simplex fit out of the grid loop must not move cv_path.
+
+    ``Synth._solve_simplex_qp`` takes no penalty argument, so each fold's
+    ``omega`` is identical at every grid point and is solved once per fold
+    rather than once per (fold, lambda). This pins that claim against the
+    un-hoisted reference implementation: same solver, same inputs, so the
+    agreement is exact rather than within a tolerance.
+    """
+    y_pre_donors = rng.normal(0.0, 1.0, (14, 5))
+    y_pre_treated = rng.normal(0.0, 1.0, 14)
+    grid = np.logspace(-3, 3, 9, dtype=np.float64)
+
+    # Reference: the pre-hoist form, re-solving the QP inside the grid loop.
+    t0 = y_pre_donors.shape[0]
+    expected_path = np.empty((len(grid), 2), dtype=np.float64)
+    expected_path[:, 0] = grid
+    for lam_idx, lam in enumerate(grid):
+        total = 0.0
+        for t in range(t0):
+            y0_lo = np.delete(y_pre_donors, t, axis=0)
+            y1_lo = np.delete(y_pre_treated, t, axis=0)
+            omega_lo = Synth._solve_simplex_qp(y1_lo, y0_lo)
+            gamma_lo, _ = _ridge_augment(omega_lo, y0_lo, y1_lo, lambda_=float(lam))
+            pred = float(y_pre_donors[t] @ (omega_lo + gamma_lo))
+            total += (float(y_pre_treated[t]) - pred) ** 2
+        expected_path[lam_idx, 1] = total
+    expected_best = float(expected_path[int(expected_path[:, 1].argmin()), 0])
+
+    best_lambda, cv_path = _loo_cv_lambda(y_pre_donors, y_pre_treated, grid)
+
+    np.testing.assert_array_equal(cv_path, expected_path)
+    assert best_lambda == expected_best
+
+
+def test_loo_cv_solves_one_qp_per_fold(
+    rng: np.random.Generator, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The simplex solve count must scale with T0 alone, not T0 * len(grid).
+
+    Guards the hoist in :func:`_loo_cv_lambda` against being refactored back
+    into the grid loop: that regression is invisible in the numbers (cv_path
+    is unchanged) and shows up only as a ~40x slowdown, which is what makes
+    the CV cost dominate a power-analysis refit loop.
+    """
+    y_pre_donors = rng.normal(0.0, 1.0, (11, 4))
+    y_pre_treated = rng.normal(0.0, 1.0, 11)
+    grid = np.logspace(-3, 3, 8, dtype=np.float64)
+
+    calls = 0
+    original = Synth._solve_simplex_qp
+
+    def counting_solve(y1_pre: np.ndarray, y0_pre: np.ndarray) -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        return original(y1_pre, y0_pre)
+
+    monkeypatch.setattr(Synth, "_solve_simplex_qp", staticmethod(counting_solve))
+
+    _loo_cv_lambda(y_pre_donors, y_pre_treated, grid)
+
+    assert calls == y_pre_donors.shape[0], (
+        f"expected one simplex solve per fold ({y_pre_donors.shape[0]}), got {calls}; "
+        f"the un-hoisted form would run {y_pre_donors.shape[0] * len(grid)}"
+    )
+
+
 def test_loo_cv_rejects_empty_grid(rng: np.random.Generator) -> None:
     """Empty lambda_grid -> ValueError before any QP runs."""
     y_pre_donors = rng.normal(0.0, 1.0, (5, 3))
@@ -872,7 +939,7 @@ def test_u9_unbalanced_panel_is_rejected(rng: np.random.Generator) -> None:
 def test_loo_cv_wraps_solver_failure_with_fold_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When a CV fold's QP fails, the RuntimeError must identify lambda and t.
+    """When a CV fold's simplex QP fails, the RuntimeError must identify t.
 
     Plan deviation: the M3 plan (Task E1) suggested an all-zero donor pool
     would trigger ``Synth._solve_simplex_qp``'s "all-zero weights"
@@ -880,8 +947,14 @@ def test_loo_cv_wraps_solver_failure_with_fold_context(
     the QP has a feasible solution for any donor matrix (e.g. ``w=[1/J,
     ..., 1/J]``), and clipping never zeroes everything out. We instead
     monkeypatch the solver to raise on the first fold -- this tests the
-    exact contract (per-fold wrap attaches ``(lambda, t)`` context) without
-    depending on a precarious DGP.
+    exact contract (per-fold wrap attaches fold context) without depending
+    on a precarious DGP.
+
+    The message carries ``t`` but not ``lambda``: the simplex fit is
+    lambda-invariant and is solved once per fold before the grid loop, so
+    there is no grid point to attribute the failure to. The ridge half of
+    the loop still reports both; see
+    ``test_loo_cv_wraps_ridge_failure_with_lambda_and_fold_context``.
     """
     y_pre_donors = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64)
     y_pre_treated = np.array([1.0, 2.0, 3.0], dtype=np.float64)
@@ -893,5 +966,26 @@ def test_loo_cv_wraps_solver_failure_with_fold_context(
     monkeypatch.setattr(Synth, "_solve_simplex_qp", staticmethod(always_fail))
 
     # First fold to be evaluated is t=0; the wrapper re-raises immediately.
-    with pytest.raises(RuntimeError, match=r"lambda=0\.5.*t=0"):
+    with pytest.raises(RuntimeError, match=r"simplex fit failed at held-out t=0"):
+        _loo_cv_lambda(y_pre_donors, y_pre_treated, grid)
+
+
+def test_loo_cv_wraps_ridge_failure_with_lambda_and_fold_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ridge-step failure inside the grid loop still reports lambda and t.
+
+    The companion to the simplex case above: ``gamma`` genuinely depends on
+    the penalty, so both coordinates are needed to locate the failure.
+    """
+    y_pre_donors = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64)
+    y_pre_treated = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    grid = np.array([0.5], dtype=np.float64)
+
+    def always_fail(*args: object, **kwargs: object) -> tuple[np.ndarray, np.ndarray]:
+        raise np.linalg.LinAlgError("simulated singular matrix")
+
+    monkeypatch.setattr("augsynth_py.synth.augmented._ridge_augment", always_fail)
+
+    with pytest.raises(RuntimeError, match=r"ridge fit failed at lambda=0\.5.*t=0"):
         _loo_cv_lambda(y_pre_donors, y_pre_treated, grid)
