@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `AugSynth.fit` is roughly 35x faster when the ridge penalty is chosen by
+  cross-validation (39.1s -> 1.1s on a 40-unit, 90-day panel with the 50-point
+  auto-grid). `_loo_cv_lambda` was re-solving the simplex QP inside the lambda
+  loop, but `Synth._solve_simplex_qp` takes no penalty argument, so each fold's
+  `omega` is identical at every grid point: 3750 QP solves where 75 suffice.
+  The solve is now hoisted to one per fold. This is caching, not a change of
+  algorithm — `cv_path`, the selected `lambda_`, and every downstream estimate
+  are bit-for-bit identical, which
+  `test_loo_cv_omega_is_lambda_invariant` pins against the un-hoisted form.
+  The cost mattered because power analysis (v0.4) refits in a loop, and market
+  selection multiplies that by each candidate treated set.
+- The `RuntimeError` raised when a CV fold fails now distinguishes the two
+  steps: the simplex half reports the fold only (`LOO-CV simplex fit failed at
+  held-out t=...`), since it is lambda-invariant and no longer runs inside the
+  grid loop, while the ridge half still reports both (`LOO-CV ridge fit failed
+  at lambda=..., held-out t=...`). Callers matching on the previous combined
+  message need to update.
+
 ## [0.3.1] - 2026-08-09
 
 Packaging and documentation only — no estimator behaviour changed, and the
