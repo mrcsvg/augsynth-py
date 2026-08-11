@@ -97,12 +97,51 @@ exist), in order:
 
 1. **v0.4 — power analysis / MDE** (`augsynth_py.power`): effect injection +
    refit + detection rate via conformal inference; parallel grid with joblib.
-   Parity oracle: `GeoLiftPower`.
+   Parity oracle: `GeoLiftPower`. **Lands in this package** — see the package
+   boundary below.
 2. **v0.5 — market selection**: candidate ranking over treatment sets ×
    durations, `GeoLiftMarketSelection` analogue. Completes the single-cell
-   GeoLift flow.
-3. **v0.6+ — multi-cell experiments**; then, if demand appears, auxiliary
-   covariates $X_i$ and GSC (Xu 2017, incl. BFR 2021 §4 augmentation).
+   GeoLift flow. **Lands in the sibling package**, not here.
+3. **v0.6+ — multi-cell experiments** (sibling package); then, if demand
+   appears, auxiliary covariates $X_i$ and GSC (Xu 2017, incl. BFR 2021 §4
+   augmentation) here.
+
+### Package boundary: this package vs. the geo-experiment sibling
+
+The line is **"given a design"** vs. **"choose a design"**:
+
+- **`augsynth-py`** answers *what can this design detect?* — estimators,
+  inference, and power/MDE for a treated set that the caller already fixed.
+  All of it is generic synthetic control: a policy evaluation using
+  `AugSynth` wants an MDE without installing geo-marketing machinery.
+- **The sibling package** answers *which design should I run, and what will
+  it cost?* — market selection over candidate treated sets, budget / ROI /
+  cost-per-incremental-conversion, multi-cell design, GeoLift-shaped API and
+  reporting. It depends on `augsynth-py` through the public API only.
+
+Why the boundary sits there:
+
+- Market selection calls power once per candidate treated set — a coarse,
+  clean call, not an inner-loop entanglement, so the split does not cut
+  through the middle of an algorithm.
+- Measured, not assumed: driving refits from outside the package (rebuild the
+  panel DataFrame, full `fit`) versus inside it (prep once, then solve) costs
+  1.6x on `Synth` and is in the noise on `AugSynth`. There is no performance
+  argument for pulling the orchestration layer in here.
+- `AugSynth(lambda_=...)` already lets a caller freeze the CV-selected penalty
+  across simulations, so the sibling needs no privileged access to internals.
+
+Consequences for anyone working here:
+
+- Do **not** add market selection, budget/ROI, or multi-cell code to this
+  package. Power analysis for a *given* treated set is the last stop.
+- The sibling repo does not exist yet, and should not be created until v0.5
+  starts: v0.4 fits here, and the public shape of `augsynth_py.power` should
+  be learned before it is frozen as a cross-package contract.
+- Docstrings in `inference.py` and `synth/augmented.py` name the sibling
+  `geolift-py`. That name implies association with Meta's GeoLift; pick a
+  neutral one before anything is published to PyPI, and update those
+  references in the same change.
 
 Deferred until further notice (do not start without maintainer sign-off):
 
