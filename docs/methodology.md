@@ -374,7 +374,7 @@ residuals for the permutation test and never touches the point estimate.
 > (the pre-period residuals are in-sample, the post-period ones are not), and the
 > resulting p-values did **not** match R `augsynth`. Do not reintroduce it as the
 > default. (A no-refit *fast approximation* is a possible future opt-in for the
-> `geolift-py` simulation loop, never the exact path.)
+> `geoexp` simulation loop, never the exact path.)
 
 ### 5.2 Test statistic and permutation schemes
 
@@ -546,14 +546,20 @@ envelope of the acceptance region rather than as a connected interval.
 Parity is pinned by `test_basque_pvalue_curve_matches_r_exact` in
 [`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py).
 
-### 5.6 Cost note for `geolift-py`
+### 5.6 Cost note for `geoexp`
 
 Because inference now refits the synthetic control once per $h_0$ (≈ `grid_size`
 refits per CI), conformal inference is **no longer cheap**. The earlier
-`geolift-py` simulation fast-path assumption that conformal inference reuses the
+`geoexp` simulation fast-path assumption that conformal inference reuses the
 pre-period fit (no refit) is **void**. A no-refit fast approximation remains a
 possible future opt-in for the power-simulation loop, but it is not the default
 and is not the exact CWZ path.
+
+Note the scope of this: the cost is per *confidence interval*, which walks a
+grid of $h_0$. A power simulation needs only a p-value at a single $h_0$
+(`conformal_pvalue(fit, h0=0)`), which is one null refit on top of the point
+fit — two fits per simulation, not `grid_size`. The power loop is therefore
+viable on the exact CWZ path; it is `conformal_interval` that is expensive.
 
 ---
 

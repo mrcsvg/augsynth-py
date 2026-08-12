@@ -252,9 +252,9 @@ def conformal_pvalue(
 
     Notes
     -----
-    The sibling ``geolift-py`` package maps its public arguments onto this
-    function: ``conformal_type`` -> ``permutation_type`` and ``side_of_test`` ->
-    ``side``.
+    The planned sibling ``geoexp`` package will map its public arguments onto
+    this function: ``conformal_type`` -> ``permutation_type`` and
+    ``side_of_test`` -> ``side``.
 
     References
     ----------
@@ -400,8 +400,8 @@ def conformal_interval(
     ``permutation_type="iid"`` the same warning can also fire from Monte-Carlo
     noise at grid points whose p-value sits near ``alpha``.
 
-    The sibling ``geolift-py`` package consumes this function to populate
-    ``ConfIntervals(method="conformal")``.
+    The planned sibling ``geoexp`` package will consume this function to
+    populate ``ConfIntervals(method="conformal")``.
 
     References
     ----------

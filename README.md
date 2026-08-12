@@ -1,8 +1,8 @@
 # augsynth-py
 
-A Python implementation of Augmented Synthetic Control Methods and
-geo-experimentation tooling. Methodologically faithful to the published
-literature, validated against the R reference implementations.
+A Python implementation of Augmented Synthetic Control Methods, with conformal
+inference. Methodologically faithful to the published literature, validated
+against the R reference implementations.
 
 > **Status: alpha.** The estimator API is functional and validated against R,
 > but not yet stable across releases. Pin the exact version in production.

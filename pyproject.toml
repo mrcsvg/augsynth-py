@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "augsynth-py"
-description = "Augmented Synthetic Control Methods and geo-experimentation tooling for Python."
+description = "Augmented Synthetic Control Methods for Python, with conformal inference."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
