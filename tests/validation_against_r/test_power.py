@@ -90,9 +90,21 @@ def _r_power_frame(r_session: Any) -> pl.DataFrame:
     r_df = r_session("as.data.frame(gl_power)")
     with localconverter(ro.default_converter + pandas2ri.converter):
         pandas_df = ro.conversion.rpy2py(r_df)
-    out = pl.from_pandas(pandas_df)
-    # Normalize column names across GeoLift versions (EffectSize vs effect_size...).
-    return out.rename({c: c.lower().replace(".", "_") for c in out.columns})
+    return _normalize_columns(pl.from_pandas(pandas_df))
+
+
+def _normalize_columns(out: pl.DataFrame) -> pl.DataFrame:
+    """Map GeoLiftPower's column names onto the snake_case names asserted on.
+
+    The installed GeoLift (2026-08 CI run) returns per-simulation rows with
+    columns ``location, pvalue, duration, EffectSize, treatment_start,
+    investment, cpic, ScaledL2Imbalance, att_estimator, detected_lift, power``.
+    Lowercasing alone turns ``EffectSize`` into ``effectsize`` (no underscore),
+    so known aliases are mapped explicitly after the generic normalization.
+    """
+    out = out.rename({c: c.lower().replace(".", "_") for c in out.columns})
+    aliases = {"effectsize": "effect_size", "scaledl2imbalance": "scaled_l2_imbalance"}
+    return out.rename({old: new for old, new in aliases.items() if old in out.columns})
 
 
 @pytest.mark.requires_r_pkg("GeoLift")
