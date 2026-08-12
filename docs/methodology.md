@@ -563,17 +563,77 @@ viable on the exact CWZ path; it is `conformal_interval` that is expensive.
 
 ---
 
-## 6. Power analysis and market selection (orchestration layer)
+## 6. Power analysis (simulation-based, GeoLift-style)
 
-**Reference:** GeoLift R package documentation and underlying use of ASCM
-for simulation-based power calculation.
+**References:** GeoLift R package documentation (`GeoLiftPower`); Abadie
+(2021, §5) for the in-time placebo ("backdating") design; CWZ 2021 (§5 above)
+for the detection test. Market selection — *choosing* the treated set — is
+the sibling `geoexp` package's concern and is deliberately absent here.
 
-**Code location:** `src/augsynth_py/power/` *(not yet implemented)*
+**Code location:** `src/augsynth_py/power.py` (`simulate_power`,
+`PowerResults`), unit-tested in `tests/unit/test_power.py` and validated
+against `GeoLiftPower` in `tests/validation_against_r/test_power.py`.
 
-**Method.** Given a panel and a candidate set of treatment markets / dates,
-inject a synthetic effect of varying magnitude, refit ASCM, and record
-detection rates. Repeat over an embarrassingly parallel grid via `joblib`.
+### 6.1 Simulation design
 
-The minimum detectable effect (MDE) is the smallest injected effect for
-which detection rate exceeds a chosen power threshold (typically 0.80) at a
-chosen significance level (typically 0.10 for one-sided geo-tests).
+For a treated set the caller fixed, `simulate_power` runs the grid
+`durations × effect_sizes × lookback_window`:
+
+1. **Windows (placebo-in-time).** Window $i$ (with $i = 0, \dots,$
+   `lookback_window`$- 1$) occupies the `duration` consecutive periods ending
+   $i$ periods before the end of the panel — GeoLift's `lookback_window`
+   semantics ("the last $L$ possible tests"). Periods after the window end
+   are **dropped**: an experiment that ends at $t$ has no data past $t$, so
+   keeping later untreated periods would dilute the post-period and change
+   the conformal test. Earlier windows therefore see a shorter pre-period
+   (reported per row as `n_pre_periods`).
+2. **Injection.** Treated outcomes inside the window are scaled by
+   $1 + \delta$ (`effect_type="multiplicative"`, GeoLift's fractional-lift
+   convention, the default) or shifted by $\delta$ in raw outcome units
+   (`"additive"`). Injection happens on the raw panel, before any
+   fixed-effect demeaning, exactly as a real treatment would enter the data.
+3. **Refit.** A fresh `copy.deepcopy` of the estimator prototype is fitted
+   per simulation. `AugSynth()` with CV re-selects its penalty inside every
+   simulation — the R-faithful behaviour — while `AugSynth(lambda_=...)`
+   freezes it (§5.6's fast path).
+4. **Detection.** `conformal_pvalue(fit, h0=0)` (§5), detected iff
+   $p \le \alpha$. Per §5.6 this is two fits per simulation (point fit +
+   one null refit), not a `grid_size` walk.
+
+The grid is embarrassingly parallel and dispatched via `joblib`
+(`n_jobs`); under `permutation_type="iid"` each simulation gets an
+independent generator seeded up front in task order, so results are
+reproducible for a given `rng` regardless of `n_jobs`.
+
+### 6.2 Power and MDE
+
+`PowerResults.power_curve()` reports, per `(duration, effect_size)`, the
+detection rate over windows; the `effect_size = 0` row is the empirical size
+(false-positive rate) of the test. `PowerResults.mde(target_power=0.8)` is
+the smallest-magnitude nonzero grid effect whose power reaches the target
+(typically 0.80, at $\alpha = 0.10$; use `side="right"` for the one-sided
+geo-test convention). No interpolation: the MDE's resolution is the grid's.
+
+**Detection convention.** Detected means $p \le \alpha$ — for exact conformal
+p-values (superuniform, $P(p \le \alpha) \le \alpha$) the non-strict form
+attains the nominal size when $\alpha$ is attainable. This is observable:
+block-scheme p-values are multiples of $1/T$, so an $\alpha$ sitting exactly
+on that grid (e.g. $\alpha = 0.1$ with $T = 90$) differs between the $\le$
+and $<$ conventions. The parity test pins the harness at a tie-free
+$\alpha$ so it holds under either convention; if the R oracle is ever shown
+to use strict $<$ at a tie, revisit `PowerResults.power_curve`.
+
+### 6.3 GeoLiftPower correspondence
+
+| `GeoLiftPower` (R)      | `simulate_power`                                  |
+|-------------------------|---------------------------------------------------|
+| `data` (via GeoDataRead)| `panel` + `unit`/`time`/`outcome` column names    |
+| `locations`             | `treated`                                         |
+| `treatment_periods`     | `durations`                                       |
+| `effect_size`           | `effect_sizes` (same default grid)                |
+| `lookback_window`       | `lookback_window` (same default, 1)               |
+| `model`, `fixed_effects`| `estimator` (`"none"` ≈ `Synth()`, `"ridge"` ≈ `AugSynth()`) |
+| `conformal_type`        | `permutation_type`                                |
+| `side_of_test`          | `side` (`"one_sided"` + positive lifts ≈ `"right"`) |
+| `alpha`                 | `alpha` (same default, 0.1)                       |
+| `cpic`, investment      | out of scope — design costing lives in `geoexp`   |

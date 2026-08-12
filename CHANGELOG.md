@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `augsynth_py.power` — simulation-based power analysis for a given treated
+  set (v0.4 milestone). `simulate_power` runs GeoLift-style placebo-in-time
+  simulations: sliding pseudo-treatment windows at the end of the panel
+  (`lookback_window`), multiplicative effect injection by default
+  (`1 + effect_size`, GeoLift's fractional-lift convention; additive
+  available), a fresh estimator fit per simulation, and detection via
+  `conformal_pvalue(h0=0)` at `pvalue <= alpha`. `PowerResults.power_curve()`
+  aggregates detection rates (the zero-effect row is the empirical size) and
+  `PowerResults.mde()` reads off the minimum detectable effect at a target
+  power. The grid parallelizes with joblib (`n_jobs`), is reproducible under
+  `permutation_type="iid"` for a given `rng` regardless of `n_jobs`, and
+  R-compatible defaults follow `GeoLiftPower` (effect grid `0..0.25` by
+  `0.05`, `lookback_window=1`, `alpha=0.1`). Parity is asserted against
+  `GeoLiftPower` (`model="none"`, deterministic block scheme) in
+  `tests/validation_against_r/test_power.py`; the estimator itself was
+  already parity-tested, so that test isolates the simulation harness.
+
 ### Changed
 
 - The planned sibling package is now named `geoexp` throughout the docstrings

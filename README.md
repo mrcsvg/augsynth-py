@@ -160,9 +160,33 @@ What's available today:
 - Multi-treated fits: pass an iterable of units as `treated` to estimate the
   effect on the treated-group mean (see
   [Treating more than one market](#treating-more-than-one-market)).
+- `simulate_power` — GeoLift-style power analysis / MDE for a *given* treated
+  set: placebo-in-time windows, effect injection, conformal detection, with
+  a joblib-parallel grid:
 
-The GeoLift-style orchestration layer (power analysis, market selection) is
-the next milestone on the roadmap.
+  ```python
+  from augsynth_py import AugSynth, simulate_power
+
+  # Same panel as the quickstart above. AugSynth() re-runs its penalty CV in
+  # every simulation (the R-faithful default); freeze it with lambda_= when
+  # the grid is large.
+  res = simulate_power(
+      panel,
+      estimator=AugSynth(lambda_=1.0),
+      unit="geo",
+      time="day",
+      outcome="sales",
+      treated="geo_00",
+      durations=15,  # periods per pseudo-experiment
+      lookback_window=10,  # placebo windows sliding back from the end
+  )
+  res.power_curve()  # detection rate per effect size; row 0.0 = false-positive rate
+  res.mde()  # smallest lift with power >= 0.8
+  ```
+
+Market selection — *choosing* the treated set, budgets, multi-cell designs —
+is the planned sibling package (`geoexp`), which will consume this one
+through its public API.
 
 ## Methodological references
 
