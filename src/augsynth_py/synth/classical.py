@@ -80,7 +80,7 @@ class Synth:
         for flow outcomes (where summing across units and periods is
         meaningful, e.g. sales or conversions), the total incremental effect
         is ``att_ * n_treated * n_post_periods`` (downstream consumers such
-        as geolift-py do this multiplication — do not double-count).
+        as ``geoexp`` do this multiplication — do not double-count).
     att_pct_ : float
         ``att_`` divided by ``mean(actual_[pre])``. Same treated-group-mean
         semantics as ``att_`` for multi-treated fits.

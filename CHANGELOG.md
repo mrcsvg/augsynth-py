@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The planned sibling package is now named `geoexp` throughout the docstrings
+  and docs that reference it, replacing the working name `geolift-py`. That
+  name implied an association with Meta's GeoLift that this clean-room MIT
+  project does not have. Documentation only — no code, API or behaviour
+  changed.
+- The package description no longer advertises "geo-experimentation tooling"
+  (`pyproject.toml`, `README.md`). Per the package boundary recorded in
+  `CLAUDE.md`, geo-experiment orchestration lands in the sibling; what ships
+  here is generic synthetic control, and the description now says so.
 - `AugSynth.fit` is roughly 35x faster when the ridge penalty is chosen by
   cross-validation (39.1s -> 1.1s on a 40-unit, 90-day panel with the 50-point
   auto-grid). `_loo_cv_lambda` was re-solving the simplex QP inside the lambda

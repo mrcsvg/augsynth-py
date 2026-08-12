@@ -138,10 +138,21 @@ Consequences for anyone working here:
 - The sibling repo does not exist yet, and should not be created until v0.5
   starts: v0.4 fits here, and the public shape of `augsynth_py.power` should
   be learned before it is frozen as a cross-package contract.
-- Docstrings in `inference.py` and `synth/augmented.py` name the sibling
-  `geolift-py`. That name implies association with Meta's GeoLift; pick a
-  neutral one before anything is published to PyPI, and update those
-  references in the same change.
+- The sibling is named **`geoexp`** — settled 2026-08-12, PyPI name free, no
+  colliding project found. It replaces the working name `geolift-py`, which
+  implied association with Meta's GeoLift. No `-py` suffix: the one on
+  `augsynth-py` disambiguates from the R `augsynth`, and there is no `geoexp`
+  elsewhere to disambiguate from.
+- If that name is ever revisited, know that the `geo` + common-word namespace
+  is close to exhausted. Geology, mining, oil and gas, geotechnical and GIS
+  vendors have been shipping named products since the 1980s and hold most
+  evocative pairings: `geoplan` (three companies), `geoscout` (geoLOGIC),
+  `geoslate` (Hexagon), `geodraft` (Geologix), `geoassign` (Thünen Institute),
+  `geostudy` (one letter from Seequent's `GeoStudio`), `geoxp` (the `GeoXp`
+  CRAN package for spatial statistics). Most of those are *free on PyPI* and
+  still unusable — so check the wider software landscape, not just PyPI
+  availability. What survives is experiment-specific vocabulary, which those
+  industries have no reason to claim.
 
 Deferred until further notice (do not start without maintainer sign-off):
 
