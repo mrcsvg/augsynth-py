@@ -19,7 +19,7 @@ extra.
 | `scipy`    | 1.12       | none        | Not imported by `src/` today; kept as a declared numerics dependency |
 | `cvxpy`    | 1.4.1      | none        | 1.4.1 is the oldest release shipping the CLARABEL solver used by `Synth` |
 | `polars`   | 1.0        | none        | Only stable 1.x API surface (`DataFrame`, `Series`, `exclude`) |
-| `joblib`   | 1.3        | none        | Not imported by `src/` yet; reserved for the v0.4 power grid   |
+| `joblib`   | 1.3        | none        | `power.py` uses only `Parallel`/`delayed`, stable since well before 1.3 |
 
 No upper caps are declared in `[project.dependencies]`. Capping in a library
 propagates to every consumer; the `numpy1` extra exists so that the narrowing
