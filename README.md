@@ -155,8 +155,15 @@ What's available today:
 - `AugSynth` — ridge-augmented synthetic control (Ben-Michael, Feller &
   Rothstein 2021), with leave-one-out CV for the ridge penalty by default.
 - `conformal_pvalue` / `conformal_interval` — exact conformal inference for
-  a constant post-period effect (Chernozhukov, Wuthrich & Zhu 2021), block
-  and iid permutation schemes.
+  a constant post-period effect (Chernozhukov, Wuthrich & Zhu 2021):
+  deterministic moving-block scheme, iid permutations, or random shuffles of
+  caller-sized blocks (`block_size=`) for serially dependent residuals.
+- `conformal_test` — the same test with its full permutation distribution:
+  the observed statistic, one statistic per permutation, and the null
+  residuals, so the observed effect can be plotted against the reference
+  distribution instead of reduced to a single p-value.
+- `adjust_pvalues` — Holm / Bonferroni / Benjamini-Hochberg adjustment when
+  several conformal p-values are reported together (matches R's `p.adjust`).
 - Multi-treated fits: pass an iterable of units as `treated` to estimate the
   effect on the treated-group mean (see
   [Treating more than one market](#treating-more-than-one-market)).
