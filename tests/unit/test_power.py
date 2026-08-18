@@ -423,6 +423,36 @@ def test_block_parallel_matches_sequential(panel: pl.DataFrame) -> None:
     )
 
 
+def test_random_block_scheme_reproducible_and_detects(panel: pl.DataFrame) -> None:
+    # permutation_type="block" with a block_size is a random scheme: it must be
+    # seeded per task like "iid" (reproducible for a given rng, n_jobs
+    # invariant) and still detect a large injected lift.
+    kwargs: dict[str, Any] = {
+        "estimator": Synth(),
+        "unit": "city",
+        "time": "t",
+        "outcome": "y",
+        "treated": "u0",
+        "durations": 3,
+        "effect_sizes": [0.0, 0.5],
+        "permutation_type": "block",
+        "block_size": 2,
+        "ns": 200,
+    }
+    a = simulate_power(panel, rng=np.random.default_rng(7), **kwargs)
+    b = simulate_power(panel, rng=np.random.default_rng(7), **kwargs)
+    c = simulate_power(panel, rng=np.random.default_rng(7), n_jobs=2, **kwargs)
+    assert (
+        a.simulations.get_column("pvalue").to_list() == b.simulations.get_column("pvalue").to_list()
+    )
+    assert (
+        a.simulations.get_column("pvalue").to_list() == c.simulations.get_column("pvalue").to_list()
+    )
+    curve = a.power_curve(alpha=0.1)
+    big = curve.filter(pl.col("effect_size") == 0.5).get_column("power")[0]
+    assert big == pytest.approx(1.0)
+
+
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
@@ -460,3 +490,7 @@ def test_validation_errors(panel: pl.DataFrame) -> None:
         simulate_power(panel, **common, durations=3, on_error="ignore")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="non-empty"):
         simulate_power(panel, **common, durations=[])
+    with pytest.raises(ValueError, match="block_size applies to permutation_type='block'"):
+        simulate_power(panel, **common, durations=3, permutation_type="iid", block_size=2)
+    with pytest.raises(ValueError, match="block_size must be >= 1"):
+        simulate_power(panel, **common, durations=3, block_size=0)

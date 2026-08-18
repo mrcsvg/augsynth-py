@@ -318,20 +318,31 @@ Robust Conformal Inference Method for Counterfactual and Synthetic Controls.
 (hereafter CWZ 2021).
 
 **Code location:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
-— public functions `conformal_pvalue` and `conformal_interval`, built on the
-private permutation core (`_post_statistic`, `_permutation_pvalue`) and the
-estimator hook `_conformal_null_residuals` on both `Synth` (§1) and `AugSynth`
-(§2). Neither function is a new estimator: both operate on an already-fitted
-`Synth` or `AugSynth`.
+— public functions `conformal_pvalue`, `conformal_test`, `conformal_interval`
+and `adjust_pvalues`, built on the private permutation core
+(`_post_statistic`, `_permutation_distribution`, `_pvalue_from_distribution`,
+`_permutation_pvalue`) and the estimator hook `_conformal_null_residuals` on
+both `Synth` (§1) and `AugSynth` (§2). None of these is a new estimator: they
+operate on an already-fitted `Synth` or `AugSynth` (or, for `adjust_pvalues`,
+on plain p-values).
 
-**Estimator surface.** Two functions operating on any fitted estimator:
+**Estimator surface.** Three functions operating on any fitted estimator, plus
+one p-value utility:
 
-- `conformal_pvalue(fit, h0=0.0, *, permutation_type="block", side="two-sided",
-  ns=1000, rng=None) -> float` — the conformal p-value for the null of a
-  **constant** post-period effect equal to `h0`.
-- `conformal_interval(fit, *, alpha=0.05, grid_size=100, permutation_type="block",
-  side="two-sided", ns=1000, rng=None) -> tuple[float, float]` — a
-  $(1-\alpha)$ confidence interval for that constant effect, by test inversion.
+- `conformal_pvalue(fit, h0=0.0, *, permutation_type="block", block_size=None,
+  side="two-sided", ns=1000, rng=None) -> float` — the conformal p-value for
+  the null of a **constant** post-period effect equal to `h0`.
+- `conformal_test(...) -> ConformalTestResult` — same arguments and same
+  p-value as `conformal_pvalue`, but returning the full test object: the
+  observed statistic, the permutation reference distribution it is ranked
+  against, the null residuals, and the test metadata (§5.7).
+- `conformal_interval(fit, *, alpha=0.05, grid_size=100,
+  permutation_type="block", block_size=None, side="two-sided", ns=1000,
+  rng=None) -> tuple[float, float]` — a $(1-\alpha)$ confidence interval for
+  that constant effect, by test inversion.
+- `adjust_pvalues(pvalues, method="holm") -> NDArray` — multiple-testing
+  adjustment (Holm / Bonferroni / Benjamini-Hochberg) for collections of
+  conformal p-values (§5.7).
 
 ### 5.1 Refit-under-null residual construction
 
@@ -391,19 +402,35 @@ S(\hat u) \;=\;
 $$
 
 CWZ's $1/\sqrt{T_1}$ normalization is constant across permutations, so it
-cancels in the rank and is omitted. Two permutation schemes produce the p-value:
+cancels in the rank and is omitted. Three permutation schemes produce the
+p-value:
 
-- **`block`** (default, deterministic): the reference set is the $T$ cyclic
-  shifts $\texttt{np.roll}(\hat u, j)$, $j = 0, \dots, T-1$, with the statistic
-  re-read on the fixed post positions. Since the observed statistic ($j=0$) is
-  always in the set, $p = \#\{j : S_j \ge S_\text{obs}\}\,/\,T$. This is the
-  moving-block scheme of CWZ 2021 §3. **Granularity floor:** $p$ is a multiple
-  of $1/T$ and peaks near $1/T$, so a $(1-\alpha)$ CI is only feasible when
-  $T \gtrsim 1/\alpha$ (e.g. a 95% interval needs $T \ge 20$ total periods).
+- **`block` with `block_size=None`** (default, deterministic): the reference
+  set is the $T$ cyclic shifts $\texttt{np.roll}(\hat u, j)$,
+  $j = 0, \dots, T-1$, with the statistic re-read on the fixed post positions.
+  Since the observed statistic ($j=0$) is always in the set,
+  $p = \#\{j : S_j \ge S_\text{obs}\}\,/\,T$. This is the moving-block scheme
+  of CWZ 2021 §3. **Granularity floor:** $p$ is a multiple of $1/T$ and peaks
+  near $1/T$, so a $(1-\alpha)$ CI is only feasible when $T \gtrsim 1/\alpha$
+  (e.g. a 95% interval needs $T \ge 20$ total periods).
+- **`block` with an integer `block_size`** (random): `ns` random shuffles of
+  the contiguous length-`block_size` blocks that partition $\hat u$ (the last
+  block is shorter when $T$ is not a multiple). Within-block order is
+  preserved, so serial dependence up to lag `block_size - 1` survives each
+  permutation — a caller-tunable middle ground between `iid`
+  (`block_size = 1` is equivalent to it) and the cyclic-shift scheme, for
+  panels whose residuals are serially dependent but where the $1/T$
+  granularity of the deterministic scheme is too coarse. Requires a
+  non-`None` `rng`; `block_size` must lie in $[1, T)$ (at `block_size >= T`
+  there is a single block and every shuffle is the identity). Uses the same
+  add-one convention as `iid` below. There is no R oracle for this scheme —
+  `augsynth`/GeoLift expose only the two CWZ schemes — so it is covered by
+  unit tests (order preservation within blocks, `block_size=1` agreement with
+  `iid`, reproducibility), not by a parity test.
 - **`iid`**: `ns` random permutations drawn from `rng`, with the
-  finite-sample-valid convention
-  $p = \bigl(1 + \#\{S_\text{perm} \ge S_\text{obs}\}\bigr)\,/\,(1 + ns)$.
-  Requires a non-`None` `rng`.
+  finite-sample-valid add-one convention
+  $p = \bigl(1 + \#\{S_\text{perm} \ge S_\text{obs}\}\bigr)\,/\,(1 + ns)$
+  (Phipson & Smyth 2010). Requires a non-`None` `rng`.
 
 ### 5.3 Confidence interval by test inversion
 
@@ -561,6 +588,47 @@ grid of $h_0$. A power simulation needs only a p-value at a single $h_0$
 fit — two fits per simulation, not `grid_size`. The power loop is therefore
 viable on the exact CWZ path; it is `conformal_interval` that is expensive.
 
+### 5.7 Null-distribution exposure and p-value adjustment
+
+**`conformal_test` — the intermediate between residuals and p-value.**
+`conformal_pvalue` collapses the permutation test to a scalar; `conformal_test`
+runs the *same* test (same refit-under-null, same schemes, bit-identical
+p-value for the same arguments and `rng` state) and returns a
+`ConformalTestResult` carrying every intermediate quantity:
+
+- `statistic` — the observed $S_\text{obs}$ on the post positions of the
+  unpermuted residuals;
+- `null_distribution` — $S$ recomputed for **each** reference permutation
+  (length $T$ under the cyclic-shift scheme, with the $j=0$ identity as its
+  first entry; length `ns` under the random schemes);
+- `residuals` and `post_mask` — the full-window null residual vector the
+  permutations acted on, and the positions the statistic is read from;
+- `observed_included` — which p-value convention applies, so `pvalue` is
+  recomputable from the exposed pieces:
+  $p = \#\{S_j \ge S_\text{obs}\}/n$ when the identity is a member (cyclic
+  shifts), $p = (1 + \#\{S \ge S_\text{obs}\})/(1 + n)$ otherwise.
+
+The motivating use is graphical: plot a histogram of `null_distribution` with
+a vertical line at `statistic` to *show* that the observed post-treatment
+behaviour is far from anything the permutations produce — rather than only
+reporting that $p$ is small. This mirrors the placebo-distribution plots of
+the classical SCM literature (Abadie, Diamond & Hainmueller 2010, Fig. 4),
+transposed to CWZ's in-time permutation distribution. The library exposes the
+data only; plotting stays outside `src/` per the testing conventions.
+
+**`adjust_pvalues` — multiple-testing adjustment.** Conformal p-values are
+marginal. When several are reported side by side — per placebo window
+(`lookback_window > 1` in §6), per candidate treated set, per outcome — the
+family-wise error rate exceeds the nominal level and the p-values should be
+adjusted before thresholding. `adjust_pvalues(pvalues, method=...)` implements
+Holm's step-down (default; FWER control under arbitrary dependence, uniformly
+at least as powerful as Bonferroni), plain Bonferroni (comparability), and
+Benjamini-Hochberg (FDR control, for large exploratory families). Output
+matches R's `p.adjust` for methods `"holm"`, `"bonferroni"` and `"BH"` and is
+returned in the input order. References: Holm (1979, *Scandinavian Journal of
+Statistics* 6(2), 65-70); Benjamini & Hochberg (1995, *JRSS-B* 57(1),
+289-300).
+
 ---
 
 ## 6. Power analysis (simulation-based, GeoLift-style)
@@ -601,7 +669,8 @@ For a treated set the caller fixed, `simulate_power` runs the grid
    one null refit), not a `grid_size` walk.
 
 The grid is embarrassingly parallel and dispatched via `joblib`
-(`n_jobs`); under `permutation_type="iid"` each simulation gets an
+(`n_jobs`); under the random permutation schemes (`"iid"`, or `"block"` with
+a `block_size` — both threaded through to §5.2) each simulation gets an
 independent generator seeded up front in task order, so results are
 reproducible for a given `rng` regardless of `n_jobs`.
 

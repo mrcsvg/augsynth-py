@@ -1,16 +1,25 @@
 """augsynth-py: Augmented Synthetic Control Methods for Python."""
 
 from augsynth_py._version import __version__
-from augsynth_py.inference import conformal_interval, conformal_pvalue
+from augsynth_py.inference import (
+    ConformalTestResult,
+    adjust_pvalues,
+    conformal_interval,
+    conformal_pvalue,
+    conformal_test,
+)
 from augsynth_py.power import PowerResults, simulate_power
 from augsynth_py.synth import AugSynth, Synth
 
 __all__ = [
     "AugSynth",
+    "ConformalTestResult",
     "PowerResults",
     "Synth",
     "__version__",
+    "adjust_pvalues",
     "conformal_interval",
     "conformal_pvalue",
+    "conformal_test",
     "simulate_power",
 ]

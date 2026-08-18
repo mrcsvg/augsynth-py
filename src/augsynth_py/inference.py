@@ -5,11 +5,16 @@ method of Chernozhukov, Wüthrich & Zhu (2021), "An Exact and Robust Conformal
 Inference Method for Counterfactual and Synthetic Controls", JASA (hereafter
 CWZ 2021).
 
-The public conformal p-value and confidence-interval surface is built on top of
-the pure permutation-test core (a residual test statistic and a permutation
-p-value with two schemes, moving block and iid) and the estimator's
-full-window refit-under-null hook (``_conformal_null_residuals``), which
-supplies the exchangeable residuals the permutation test operates on.
+The public surface — :func:`conformal_pvalue`, :func:`conformal_test` (the
+p-value plus the full permutation distribution of the test statistic), and
+:func:`conformal_interval` — is built on top of the pure permutation-test core
+(a residual test statistic and a permutation reference distribution with three
+schemes: deterministic moving-block cyclic shifts, random contiguous-block
+shuffles of a caller-chosen ``block_size``, and iid random permutations) and
+the estimator's full-window refit-under-null hook
+(``_conformal_null_residuals``), which supplies the exchangeable residuals the
+permutation test operates on. :func:`adjust_pvalues` provides standard
+multiple-testing adjustments for collections of conformal p-values.
 
 References
 ----------
@@ -21,6 +26,8 @@ American Statistical Association, 116(536), 1849-1864.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 import numpy as np
@@ -28,6 +35,7 @@ from numpy.typing import NDArray
 
 Side = Literal["two-sided", "left", "right"]
 PermutationType = Literal["block", "iid"]
+AdjustMethod = Literal["bonferroni", "holm", "bh"]
 
 
 class _FittedSC(Protocol):
@@ -110,32 +118,37 @@ def _post_statistic(
     raise ValueError(f"Unknown side {side!r}; expected 'two-sided', 'left', or 'right'.")
 
 
-def _permutation_pvalue(
+def _permutation_distribution(
     residuals: NDArray[np.float64],
     post_mask: NDArray[np.bool_],
     side: Side,
     permutation_type: PermutationType,
+    block_size: int | None,
     ns: int,
     rng: np.random.Generator | None,
-) -> float:
-    r"""Permutation p-value for the CWZ conformal test.
+) -> tuple[float, NDArray[np.float64], bool]:
+    r"""Observed statistic and permutation reference distribution (CWZ 2021, §3).
 
     The full residual vector is permuted and the test statistic is recomputed on
-    the *fixed* post positions (``post_mask``), then compared to the observed
-    statistic (the statistic on the unpermuted residuals). See CWZ 2021, §3
-    (Eq. defining :math:`S_q` and the permutation p-value).
+    the *fixed* post positions (``post_mask``) for every permutation in the
+    reference set. See CWZ 2021, §3 (Eq. defining :math:`S_q` and the
+    permutation p-value). Three schemes are supported:
 
-    Two permutation schemes are supported:
-
-    - ``"block"``: the moving-block (cyclic-shift) scheme, deterministic. The
-      reference set is the :math:`T` cyclic shifts ``np.roll(residuals, j)`` for
-      ``j = 0, ..., T-1``; ``j = 0`` reproduces the observed statistic. Since the
-      observed statistic is always a member of the reference set,
-      :math:`p = \#\{j : S_j \ge S_{\mathrm{obs}}\} / T`, which is always at
-      least :math:`1/T`. ``ns`` and ``rng`` are ignored.
-    - ``"iid"``: ``ns`` random permutations drawn from ``rng``, using the
-      finite-sample-valid convention
-      :math:`p = (1 + \#\{S_{\mathrm{perm}} \ge S_{\mathrm{obs}}\}) / (1 + ns)`.
+    - ``"block"`` with ``block_size=None``: the moving-block (cyclic-shift)
+      scheme of CWZ 2021 §3, deterministic. The reference set is the :math:`T`
+      cyclic shifts ``np.roll(residuals, j)`` for ``j = 0, ..., T-1``; ``j = 0``
+      reproduces the observed statistic, so the observed statistic is a member
+      of the returned distribution. ``ns`` and ``rng`` are ignored.
+    - ``"block"`` with an integer ``block_size``: ``ns`` random shuffles of the
+      contiguous length-``block_size`` blocks that partition the residual
+      vector (the last block is shorter when :math:`T` is not a multiple).
+      Within-block order is preserved, so serial dependence up to lag
+      ``block_size - 1`` survives the permutation — the caller-tunable analogue
+      of the moving-block scheme's robustness to weak dependence. ``block_size
+      = 1`` degenerates to iid random permutations. Requires ``rng``.
+    - ``"iid"``: ``ns`` random permutations of the individual residuals drawn
+      from ``rng`` (all permutations equally likely), the scheme for iid
+      errors. ``block_size`` must be ``None``.
 
     Parameters
     ----------
@@ -147,44 +160,261 @@ def _permutation_pvalue(
         Test direction; see :func:`_post_statistic`.
     permutation_type : str
         Either ``"block"`` or ``"iid"``.
+    block_size : int or None
+        Length of the contiguous blocks for the random-block scheme; ``None``
+        selects the deterministic cyclic-shift scheme. Only valid with
+        ``permutation_type="block"``; must satisfy ``1 <= block_size < T``.
     ns : int
-        Number of random permutations (``"iid"`` only; ignored for ``"block"``).
+        Number of random permutations (random schemes only; ignored for the
+        deterministic cyclic-shift scheme).
     rng : numpy.random.Generator or None
-        Random generator, required for ``"iid"``.
+        Random generator, required for the random schemes.
 
     Returns
     -------
-    float
-        The permutation p-value in ``[0, 1]``.
+    tuple[float, NDArray[np.float64], bool]
+        ``(statistic, null_distribution, observed_included)``: the observed
+        statistic, the statistics of the reference permutations, and whether
+        the identity permutation (hence the observed statistic) is a member of
+        the reference set — which decides the p-value convention in
+        :func:`_pvalue_from_distribution`.
 
     Raises
     ------
     ValueError
-        If ``permutation_type`` is unknown, ``side`` is unknown, or
-        ``permutation_type == "iid"`` and ``rng`` is None.
+        If ``permutation_type`` or ``side`` is unknown, a random scheme is
+        requested without ``rng``, ``block_size`` is passed with ``"iid"``, or
+        ``block_size`` is outside ``[1, T)``.
     """
     s_obs = _post_statistic(residuals, post_mask, side)
+    t = int(residuals.shape[0])
 
     if permutation_type == "block":
-        t = int(residuals.shape[0])
-        count = 0
-        for j in range(t):
-            shifted = np.roll(residuals, j)
-            if _post_statistic(shifted, post_mask, side) >= s_obs:
-                count += 1
-        return count / t
+        if block_size is None:
+            stats = np.fromiter(
+                (_post_statistic(np.roll(residuals, j), post_mask, side) for j in range(t)),
+                dtype=np.float64,
+                count=t,
+            )
+            return s_obs, stats, True
+        if not 1 <= block_size < t:
+            raise ValueError(
+                f"block_size must be in [1, T) with T={t} total periods, got {block_size}: "
+                "at block_size >= T there is a single block and every shuffle is the "
+                "identity, so the test is degenerate."
+            )
+        if rng is None:
+            raise ValueError("permutation_type='block' with a block_size requires a non-None rng.")
+        blocks = [np.arange(s, min(s + block_size, t)) for s in range(0, t, block_size)]
+        stats = np.empty(ns, dtype=np.float64)
+        for i in range(ns):
+            order = rng.permutation(len(blocks))
+            permuted = residuals[np.concatenate([blocks[k] for k in order])]
+            stats[i] = _post_statistic(permuted, post_mask, side)
+        return s_obs, stats, False
 
     if permutation_type == "iid":
+        if block_size is not None:
+            raise ValueError(
+                "block_size applies to permutation_type='block' only; use "
+                "permutation_type='block' with block_size for random block shuffles "
+                "(block_size=1 is equivalent to 'iid')."
+            )
         if rng is None:
             raise ValueError("permutation_type='iid' requires a non-None rng.")
-        count = 0
-        for _ in range(ns):
-            permuted = rng.permutation(residuals)
-            if _post_statistic(permuted, post_mask, side) >= s_obs:
-                count += 1
-        return (1 + count) / (1 + ns)
+        stats = np.empty(ns, dtype=np.float64)
+        for i in range(ns):
+            stats[i] = _post_statistic(rng.permutation(residuals), post_mask, side)
+        return s_obs, stats, False
 
     raise ValueError(f"Unknown permutation_type {permutation_type!r}; expected 'block' or 'iid'.")
+
+
+def _pvalue_from_distribution(
+    statistic: float,
+    null_distribution: NDArray[np.float64],
+    observed_included: bool,
+) -> float:
+    r"""Turn a permutation reference distribution into a p-value.
+
+    When the reference set contains the identity permutation (the deterministic
+    cyclic-shift scheme), :math:`p = \#\{S_j \ge S_{\mathrm{obs}}\} / n` — the
+    identity always ties itself, so :math:`p \ge 1/n`. For random schemes the
+    observed statistic is not a member and the finite-sample-valid add-one
+    convention applies:
+    :math:`p = (1 + \#\{S_{\mathrm{perm}} \ge S_{\mathrm{obs}}\}) / (1 + n)`
+    (Phipson & Smyth 2010, "Permutation p-values should never be zero").
+    """
+    count = int(np.count_nonzero(null_distribution >= statistic))
+    n = int(null_distribution.shape[0])
+    if observed_included:
+        return count / n
+    return (1 + count) / (1 + n)
+
+
+def _permutation_pvalue(
+    residuals: NDArray[np.float64],
+    post_mask: NDArray[np.bool_],
+    side: Side,
+    permutation_type: PermutationType,
+    ns: int,
+    rng: np.random.Generator | None,
+    *,
+    block_size: int | None = None,
+) -> float:
+    """Permutation p-value for the CWZ conformal test.
+
+    Composition of :func:`_permutation_distribution` (which documents the
+    schemes and their parameters) and :func:`_pvalue_from_distribution` (which
+    documents the two p-value conventions).
+    """
+    s_obs, null_distribution, observed_included = _permutation_distribution(
+        residuals, post_mask, side, permutation_type, block_size, ns, rng
+    )
+    return _pvalue_from_distribution(s_obs, null_distribution, observed_included)
+
+
+# eq=False: the generated __eq__ would compare the ndarray fields elementwise,
+# making `result_a == result_b` raise on truth-value ambiguity; identity
+# semantics are the useful behaviour for a result object holding arrays.
+@dataclass(frozen=True, eq=False)
+class ConformalTestResult:
+    r"""Full output of one conformal permutation test (CWZ 2021, §3).
+
+    Returned by :func:`conformal_test`. Exposes the intermediate quantities
+    between the refit-under-null residuals and the scalar p-value — in
+    particular the permutation distribution of the test statistic, so the
+    observed statistic can be placed against the reference distribution (e.g.
+    a histogram of ``null_distribution`` with a vertical line at
+    ``statistic``) instead of collapsing straight to ``pvalue``.
+
+    Attributes
+    ----------
+    pvalue : float
+        The conformal p-value, identical to what :func:`conformal_pvalue`
+        returns for the same arguments.
+    statistic : float
+        The observed test statistic :math:`S_{\mathrm{obs}}` — the CWZ
+        statistic evaluated on the post positions of the unpermuted residuals
+        (see :func:`_post_statistic`; the constant :math:`1/\sqrt{T_1}`
+        normalization is omitted, as it cancels in the p-value rank).
+    null_distribution : NDArray[np.float64]
+        The test statistic of every reference permutation. Under the
+        deterministic cyclic-shift scheme this has length :math:`T` and its
+        first entry (the ``j = 0`` identity shift) equals ``statistic``; under
+        the random schemes it has length ``ns`` and ``statistic`` is not a
+        member.
+    residuals : NDArray[np.float64]
+        The full-window refit-under-null residual vector the permutations were
+        applied to (``_conformal_null_residuals(h0)``).
+    post_mask : NDArray[np.bool_]
+        Boolean mask over ``residuals`` selecting the post-treatment
+        positions the statistic is read on.
+    observed_included : bool
+        Whether the reference set contains the identity permutation, hence the
+        p-value convention: ``True`` (cyclic shifts) means
+        ``pvalue = mean(null_distribution >= statistic)``; ``False`` (random
+        schemes) means the add-one convention
+        ``pvalue = (1 + count) / (1 + len(null_distribution))``.
+    h0 : float
+        The hypothesized constant post-period effect that was tested.
+    side : str
+        Test direction the statistic was computed with.
+    permutation_type : str
+        Permutation scheme family, ``"block"`` or ``"iid"``.
+    block_size : int or None
+        Block length of the random-block scheme, or ``None`` for the
+        deterministic cyclic-shift scheme / iid permutations.
+    """
+
+    pvalue: float
+    statistic: float
+    null_distribution: NDArray[np.float64]
+    residuals: NDArray[np.float64]
+    post_mask: NDArray[np.bool_]
+    observed_included: bool
+    h0: float
+    side: Side
+    permutation_type: PermutationType
+    block_size: int | None
+
+
+def conformal_test(
+    fit: _FittedSC,
+    h0: float = 0.0,
+    *,
+    permutation_type: PermutationType = "block",
+    block_size: int | None = None,
+    side: Side = "two-sided",
+    ns: int = 1000,
+    rng: np.random.Generator | None = None,
+) -> ConformalTestResult:
+    r"""Conformal permutation test with its full reference distribution.
+
+    Identical to :func:`conformal_pvalue` — same null, same refit-under-null
+    residual construction, same permutation schemes, bit-identical p-value for
+    the same arguments (and the same ``rng`` state on the random schemes) —
+    but returning the whole :class:`ConformalTestResult` instead of the scalar
+    p-value: the observed statistic, the statistic of every reference
+    permutation, and the residual vector they were computed from. Use it when
+    the p-value alone is not enough — typically to show *how far* the observed
+    post-period behaviour sits from the permutation reference distribution,
+    not merely that :math:`p` is small.
+
+    Parameters
+    ----------
+    fit : _FittedSC
+        A fitted estimator exposing ``pre_mask_``, ``att_`` and the
+        ``_conformal_null_residuals`` method (any
+        :class:`~augsynth_py.synth.classical.Synth` or
+        :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
+    h0 : float, optional
+        The hypothesized constant post-period effect. Defaults to ``0.0`` (the
+        sharp null of no effect).
+    permutation_type : {"block", "iid"}, optional
+        Permutation scheme family; see :func:`conformal_pvalue`.
+    block_size : int or None, optional
+        ``None`` (default) with ``"block"`` selects the deterministic
+        cyclic-shift scheme; an integer in ``[1, T)`` selects ``ns`` random
+        shuffles of contiguous length-``block_size`` blocks (within-block
+        order preserved), which requires ``rng``. See :func:`conformal_pvalue`.
+    side : {"two-sided", "left", "right"}, optional
+        Direction of the test; see :func:`_post_statistic`.
+    ns : int, optional
+        Number of random permutations for the random schemes; ignored by the
+        deterministic cyclic-shift scheme. Defaults to ``1000``.
+    rng : numpy.random.Generator or None, optional
+        Random generator; required for the random schemes.
+
+    Returns
+    -------
+    ConformalTestResult
+        The p-value together with the observed statistic, the permutation
+        reference distribution, the null residuals, and the test metadata.
+
+    References
+    ----------
+    Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An Exact and Robust
+    Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
+    116(536), 1849-1864.
+    """
+    residuals = np.asarray(fit._conformal_null_residuals(h0), dtype=np.float64)
+    post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
+    statistic, null_distribution, observed_included = _permutation_distribution(
+        residuals, post_mask, side, permutation_type, block_size, ns, rng
+    )
+    return ConformalTestResult(
+        pvalue=_pvalue_from_distribution(statistic, null_distribution, observed_included),
+        statistic=statistic,
+        null_distribution=null_distribution,
+        residuals=residuals,
+        post_mask=post_mask,
+        observed_included=observed_included,
+        h0=h0,
+        side=side,
+        permutation_type=permutation_type,
+        block_size=block_size,
+    )
 
 
 def conformal_pvalue(
@@ -192,6 +422,7 @@ def conformal_pvalue(
     h0: float = 0.0,
     *,
     permutation_type: PermutationType = "block",
+    block_size: int | None = None,
     side: Side = "two-sided",
     ns: int = 1000,
     rng: np.random.Generator | None = None,
@@ -233,25 +464,49 @@ def conformal_pvalue(
         The hypothesized constant post-period effect. Defaults to ``0.0`` (the
         sharp null of no effect).
     permutation_type : {"block", "iid"}, optional
-        Permutation scheme. ``"block"`` (default) is the deterministic
-        moving-block (cyclic-shift) scheme and needs no ``rng``. ``"iid"`` draws
-        ``ns`` random permutations and requires ``rng``.
+        Permutation scheme family. ``"block"`` (default) with
+        ``block_size=None`` is the deterministic moving-block (cyclic-shift)
+        scheme of CWZ 2021 §3 and needs no ``rng``; with an integer
+        ``block_size`` it becomes the random block-shuffle scheme below.
+        ``"iid"`` draws ``ns`` random permutations of the individual residuals
+        and requires ``rng``.
+    block_size : int or None, optional
+        ``None`` (default) keeps the deterministic cyclic-shift scheme. An
+        integer ``b`` in ``[1, T)`` (``T`` = total periods) instead draws
+        ``ns`` random shuffles of the contiguous length-``b`` blocks that
+        partition the residual vector (the last block is shorter when ``T`` is
+        not a multiple of ``b``). Within-block order is preserved, so serial
+        dependence up to lag ``b - 1`` survives each permutation — a
+        caller-tunable middle ground between ``"iid"`` (``b = 1`` is
+        equivalent to it) and the cyclic-shift scheme, useful when the
+        residuals are serially dependent and the ``1/T`` granularity of the
+        cyclic scheme is too coarse. Requires ``rng``; the add-one p-value
+        convention below applies. Only valid with ``permutation_type="block"``.
     side : {"two-sided", "left", "right"}, optional
         Direction of the test; see :func:`_post_statistic`.
     ns : int, optional
-        Number of random permutations for ``permutation_type="iid"``; ignored
-        for ``"block"``. Defaults to ``1000``.
+        Number of random permutations for the random schemes (``"iid"``, or
+        ``"block"`` with a ``block_size``); ignored by the deterministic
+        cyclic-shift scheme. Defaults to ``1000``.
     rng : numpy.random.Generator or None, optional
-        Random generator; required for ``permutation_type="iid"``, ignored for
-        ``"block"``.
+        Random generator; required for the random schemes, ignored by the
+        deterministic cyclic-shift scheme.
 
     Returns
     -------
     float
-        The conformal p-value in ``[0, 1]``.
+        The conformal p-value in ``[0, 1]``. Deterministic cyclic-shift
+        scheme: a multiple of ``1/T`` with a ``1/T`` floor. Random schemes:
+        the add-one convention ``(1 + count) / (1 + ns)``, with a
+        ``1/(1 + ns)`` floor.
 
     Notes
     -----
+    Use :func:`conformal_test` to additionally obtain the observed statistic
+    and the full permutation distribution it is ranked against, and
+    :func:`adjust_pvalues` when several conformal p-values are reported
+    together.
+
     The planned sibling ``geoexp`` package will map its public arguments onto
     this function: ``conformal_type`` -> ``permutation_type`` and
     ``side_of_test`` -> ``side``.
@@ -264,7 +519,9 @@ def conformal_pvalue(
     """
     residuals = np.asarray(fit._conformal_null_residuals(h0), dtype=np.float64)
     post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
-    return _permutation_pvalue(residuals, post_mask, side, permutation_type, ns, rng)
+    return _permutation_pvalue(
+        residuals, post_mask, side, permutation_type, ns, rng, block_size=block_size
+    )
 
 
 def conformal_interval(
@@ -273,6 +530,7 @@ def conformal_interval(
     alpha: float = 0.05,
     grid_size: int = 100,
     permutation_type: PermutationType = "block",
+    block_size: int | None = None,
     side: Side = "two-sided",
     ns: int = 1000,
     rng: np.random.Generator | None = None,
@@ -326,16 +584,21 @@ def conformal_interval(
     permutation_type : {"block", "iid"}, optional
         Permutation scheme threaded to :func:`conformal_pvalue`. Defaults to
         ``"block"``.
+    block_size : int or None, optional
+        Block length for the random block-shuffle scheme, threaded to
+        :func:`conformal_pvalue` (see there for semantics and constraints).
+        ``None`` (default) keeps the deterministic cyclic-shift scheme.
     side : {"two-sided"}, optional
         Kept in the signature to make the two-sided requirement explicit. Only
         ``"two-sided"`` (the default) is accepted; any other value raises
         ``ValueError`` because a one-sided acceptance region is unbounded.
     ns : int, optional
-        Number of random permutations for ``permutation_type="iid"``; ignored
-        for ``"block"``. Defaults to ``1000``.
+        Number of random permutations for the random schemes (``"iid"``, or
+        ``"block"`` with a ``block_size``); ignored by the deterministic
+        cyclic-shift scheme. Defaults to ``1000``.
     rng : numpy.random.Generator or None, optional
         Random generator threaded to :func:`conformal_pvalue`; required for
-        ``permutation_type="iid"``. On the iid path the same generator is
+        the random schemes. On the random paths the same generator is
         consumed sequentially across grid points, which is intentional.
 
     Returns
@@ -396,9 +659,10 @@ def conformal_interval(
     ``docs/methodology.md`` §5.5). When the accepted grid points are not
     consecutive, a :class:`UserWarning` is emitted and the returned ``(min,
     max)`` envelope *overstates* (never understates) the acceptance region —
-    conservative in direction, but not a connected interval. Under
-    ``permutation_type="iid"`` the same warning can also fire from Monte-Carlo
-    noise at grid points whose p-value sits near ``alpha``.
+    conservative in direction, but not a connected interval. Under the random
+    permutation schemes (``"iid"``, or ``"block"`` with a ``block_size``) the
+    same warning can also fire from Monte-Carlo noise at grid points whose
+    p-value sits near ``alpha``.
 
     The planned sibling ``geoexp`` package will consume this function to
     populate ``ConfIntervals(method="conformal")``.
@@ -451,6 +715,7 @@ def conformal_interval(
                     fit,
                     float(h0),
                     permutation_type=permutation_type,
+                    block_size=block_size,
                     side=side,
                     ns=ns,
                     rng=rng,
@@ -521,9 +786,94 @@ def conformal_interval(
             "of the accepted grid points and overstate (never understate) the "
             "true acceptance region; do not read them as a connected interval. "
             "This is a genuine property of CWZ test inversion on some panels "
-            "(see docs/methodology.md §5.5); under permutation_type='iid' it "
-            "can also be Monte-Carlo noise at grid points with p near alpha.",
+            "(see docs/methodology.md §5.5); under the random permutation "
+            "schemes ('iid', or 'block' with a block_size) it can also be "
+            "Monte-Carlo noise at grid points with p near alpha.",
             UserWarning,
             stacklevel=2,
         )
     return (float(candidates[accepted_idx[0]]), float(candidates[accepted_idx[-1]]))
+
+
+def adjust_pvalues(
+    pvalues: Sequence[float] | NDArray[np.float64],
+    method: AdjustMethod = "holm",
+) -> NDArray[np.float64]:
+    r"""Adjust a collection of p-values for multiple testing.
+
+    Conformal p-values are marginal: each one is valid for its own test. When
+    several are reported together — one per placebo window, per candidate
+    treated set, per tested ``h0``, or per outcome — the family-wise error
+    rate (or false discovery rate) is no longer the nominal level, and the
+    p-values should be adjusted before thresholding. This helper implements
+    the three standard adjustments; each adjusted p-value can be compared
+    directly to the desired level :math:`\alpha`.
+
+    Parameters
+    ----------
+    pvalues : Sequence[float] or NDArray[np.float64]
+        The raw p-values, each in ``[0, 1]``. One-dimensional and non-empty.
+    method : {"holm", "bonferroni", "bh"}, optional
+        - ``"holm"`` (default): Holm's step-down procedure (Holm 1979).
+          Controls the family-wise error rate under arbitrary dependence, and
+          is uniformly at least as powerful as Bonferroni — there is no
+          assumption under which plain Bonferroni is preferable.
+        - ``"bonferroni"``: :math:`\min(1, m \, p_i)`. Included for
+          comparability with other software.
+        - ``"bh"``: the Benjamini-Hochberg step-up procedure (Benjamini &
+          Hochberg 1995), controlling the false discovery rate under
+          independence or positive regression dependence. Appropriate for
+          large exploratory families (e.g. a scan over many candidate
+          designs) where FWER control is needlessly strict.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        The adjusted p-values, in the same order as the input, each in
+        ``[0, 1]``. Matches R's ``p.adjust`` with methods ``"holm"``,
+        ``"bonferroni"`` and ``"BH"``.
+
+    Raises
+    ------
+    ValueError
+        If ``pvalues`` is empty or not one-dimensional, contains values
+        outside ``[0, 1]`` or non-finite values, or ``method`` is unknown.
+
+    References
+    ----------
+    Holm, S. (1979). A Simple Sequentially Rejective Multiple Test Procedure.
+    Scandinavian Journal of Statistics, 6(2), 65-70.
+
+    Benjamini, Y., & Hochberg, Y. (1995). Controlling the False Discovery
+    Rate: A Practical and Powerful Approach to Multiple Testing. Journal of
+    the Royal Statistical Society, Series B, 57(1), 289-300.
+    """
+    p = np.asarray(pvalues, dtype=np.float64)
+    if p.ndim != 1:
+        raise ValueError(f"pvalues must be one-dimensional, got shape {p.shape}.")
+    if p.size == 0:
+        raise ValueError("pvalues must be non-empty.")
+    if not np.all(np.isfinite(p)) or bool(np.any((p < 0.0) | (p > 1.0))):
+        raise ValueError("pvalues must all be finite and in [0, 1].")
+
+    m = p.size
+    if method == "bonferroni":
+        return np.minimum(1.0, m * p)
+
+    if method not in ("holm", "bh"):
+        raise ValueError(f"Unknown method {method!r}; expected 'holm', 'bonferroni', or 'bh'.")
+
+    order = np.argsort(p, kind="stable")
+    ranked = p[order]
+    if method == "holm":
+        # Step-down: (m - j) * p_(j) for ascending rank j = 0..m-1, made
+        # monotone non-decreasing by a running maximum.
+        adjusted_sorted = np.minimum(1.0, np.maximum.accumulate((m - np.arange(m)) * ranked))
+    else:
+        # Step-up: m/j * p_(j) for one-based rank j, made monotone by a
+        # running minimum taken from the largest p downwards.
+        raw = ranked * (m / np.arange(1, m + 1))
+        adjusted_sorted = np.minimum(1.0, np.minimum.accumulate(raw[::-1])[::-1])
+    out = np.empty(m, dtype=np.float64)
+    out[order] = adjusted_sorted
+    return out
