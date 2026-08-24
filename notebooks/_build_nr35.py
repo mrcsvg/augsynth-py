@@ -84,6 +84,11 @@ CELLS.append(
     7. **Ato 7 — Robustez do pool.** Doadores com exposição própria a trabalho em altura.
     8. **Ato 8 — Que efeito este desenho detecta?** MDE via `simulate_power` (v0.4).
     9. **Ato 9 — Conclusões e limitações.**
+
+    > **Sobre os dados.** O notebook roda sobre o painel real do AEAT quando
+    > `_data/aeat_nr35_panel.csv` existir (ver `_fetch_aeat_nr35.py`); sem ele, usa
+    > um painel **simulado** com efeito verdadeiro conhecido — útil justamente para
+    > testar se o pipeline recupera a verdade. O modo em uso é anunciado no Ato 2.
 """)
 )
 
@@ -212,9 +217,18 @@ CELLS.append(
     O painel vem do **AEAT** (Anuário Estatístico de Acidentes do Trabalho, MPS/MTE):
     óbitos por acidente de trabalho e vínculos empregatícios por **divisão CNAE 2.0**
     e ano. A taxa de mortalidade é `óbitos / vínculos × 100.000` — a métrica que o
-    próprio AEAT publica no capítulo de taxas.
+    próprio AEAT publica no capítulo de indicadores.
 
-    Três decisões de preparo (ver `_data/README-aeat.md` para a proveniência):
+    A célula abaixo carrega `\\_data/aeat_nr35_panel.csv` (dados reais, gerados por
+    `\\_fetch_aeat_nr35.py` — requer acesso a gov.br) e, na ausência dele, cai para
+    `\\_data/aeat_nr35_panel_demo.csv`: um painel **simulado** com magnitudes
+    calibradas no AEAT e um **efeito verdadeiro conhecido** injetado na construção
+    (−8% em 2013, −13% de 2014 em diante — a "verdade" fica em
+    `aeat_nr35_demo_truth.csv` e é usada nos atos seguintes para conferir se os
+    estimadores a recuperam). O modo em uso é impresso em destaque; proveniência
+    completa em [`_data/README-aeat.md`](_data/README-aeat.md).
+
+    Três decisões de preparo (valem para o painel real):
 
     - As divisões da construção (**41 Construção de edifícios, 42 Obras de
       infraestrutura, 43 Serviços especializados**) são agregadas em uma única
@@ -232,8 +246,20 @@ CELLS.append(
 
 CELLS.append(
     code("""
+    real_csv = DATA_DIR / "aeat_nr35_panel.csv"
+    demo_csv = DATA_DIR / "aeat_nr35_panel_demo.csv"
+    IS_DEMO = not real_csv.exists()
+    truth = None
+    if IS_DEMO:
+        print("=" * 74)
+        print("⚠️  MODO DEMONSTRAÇÃO: usando painel SIMULADO (aeat_nr35_panel_demo.csv).")
+        print("    Efeito verdadeiro injetado na construção: -8% (2013), -13% (2014+).")
+        print("    Nada abaixo é estatística oficial. Para dados reais do AEAT, rode")
+        print("    notebooks/_fetch_aeat_nr35.py numa máquina com acesso a gov.br.")
+        print("=" * 74)
+        truth = pl.read_csv(DATA_DIR / "aeat_nr35_demo_truth.csv")
     panel = (
-        pl.read_csv(DATA_DIR / "aeat_nr35_panel.csv")
+        pl.read_csv(demo_csv if IS_DEMO else real_csv)
         .filter(pl.col("ano").is_between(ANO_MIN, ANO_MAX))
         .sort([UNIT, TIME])
     )
@@ -270,6 +296,9 @@ CELLS.append(
     ax.set_title("Taxa de mortalidade por acidente de trabalho — construção vs demais divisões CNAE")
     ax.set_xlabel("Ano"); ax.set_ylabel(OUT_LABEL)
     ax.legend(loc="upper right")
+    if IS_DEMO:
+        ax.text(0.5, 0.5, "DADOS SIMULADOS", transform=ax.transAxes, fontsize=38,
+                color=COLOR_TEXT, alpha=0.12, ha="center", va="center", rotation=18, zorder=0)
     plt.tight_layout(); plt.show()
 """)
 )
@@ -430,9 +459,12 @@ CELLS.append(
     ax.plot(years, aug.actual_, color=COLOR_TREATED, lw=2.4, label="Construção (real)")
     ax.plot(years, scm.synthetic_, color=COLOR_SYNTH, lw=1.8, ls="--", label="SCM (progfunc='none')")
     ax.plot(years, aug.synthetic_, color=COLOR_AUGMENTED, lw=1.8, label="AugSynth (progfunc='ridge')")
+    if IS_DEMO:
+        ax.plot(truth["ano"], truth["taxa_contrafactual"], color=COLOR_TEXT, lw=1.4,
+                ls=(0, (1, 2)), label="Contrafactual VERDADEIRO (demo)")
     ax.axvline(T0_VIGENCIA - 0.5, color=COLOR_TEXT, ls="--", lw=0.9, alpha=0.55)
     ax.set_ylabel(OUT_LABEL)
-    ax.set_title("Contrafactual SCM vs AugSynth")
+    ax.set_title("Contrafactual SCM vs AugSynth" + (" — com a verdade simulada" if IS_DEMO else ""))
     ax.legend(loc="best")
 
     axr.axhline(0, color=COLOR_TEXT, lw=0.8)
@@ -442,6 +474,22 @@ CELLS.append(
     axr.set_xlabel("Ano"); axr.set_ylabel("Correção ridge")
     axr.set_title("O que a ridge adiciona ao SCM, ano a ano")
     plt.tight_layout(); plt.show()
+""")
+)
+
+CELLS.append(
+    code("""
+    # Modo demo: os estimadores recuperam o efeito verdadeiro injetado?
+    if IS_DEMO:
+        post = ~aug.pre_mask_
+        att_true = float(
+            (aug.actual_[post] - truth["taxa_contrafactual"].to_numpy()[post]).mean()
+        )
+        print(f"ATT verdadeiro (demo)            : {att_true:+.3f} óbitos/100 mil")
+        print(f"ATT estimado — SCM ('none')      : {scm.att_:+.3f}  (erro {scm.att_ - att_true:+.3f})")
+        print(f"ATT estimado — AugSynth ('ridge'): {aug.att_:+.3f}  (erro {aug.att_ - att_true:+.3f})")
+    else:
+        print("Painel real — não há verdade conhecida para comparar.")
 """)
 )
 
@@ -510,6 +558,12 @@ CELLS.append(
     2. **Placebos in-space** (Abadie et al. 2010): reajustar o SCM fingindo que cada
        doador foi tratado em 2013 e comparar o gap da construção com a distribuição
        placebo, via razão RMSPE pós/pré.
+
+    Espere pouco poder dos dois: com dezenas de doadores e 12 períodos, o refit
+    sob o nulo do teste conformal absorve quase qualquer $h_0$ (intervalos
+    enormes — o `UserWarning` abaixo é o estimador dizendo isso), e os placebos
+    in-space herdam o mesmo ajuste-perfeito do pré que aflige a unidade tratada.
+    O diagnóstico honesto de "quanto dá para detectar" fica para o Ato 8.
 """)
 )
 
@@ -703,14 +757,18 @@ CELLS.append(
 
     Antes de interpretar qualquer p-valor, a pergunta de desenho: **com 5 anos de
     pré e inferência conformal, que tamanho de efeito este painel detecta?**
-    `simulate_power` responde por simulação: trunca o painel no fim do pré
-    (2012), injeta efeitos multiplicativos na construção em janelas
-    placebo-no-tempo e mede a taxa de detecção.
+    `simulate_power` responde por simulação placebo-no-tempo: trunca o painel no
+    fim do pré (2012), injeta efeitos multiplicativos na construção e mede a taxa
+    de detecção.
 
-    Duas ressalvas de leitura: dentro da janela de simulação o pré efetivo encolhe
-    ainda mais (3–4 anos), e usamos permutação iid porque com $T = 5$ a block só
-    tem 5 rotações (p mínimo 0,2 — poder zero por construção em α = 0,10).
-    O resultado é a fotografia honesta do que 5 anos de pré compram.
+    A limitação estrutural aparece antes de qualquer número: **um painel anual
+    quase não tem janelas placebo**. Com $T_0 = 5$, existem só 2 janelas por
+    duração (as demais degeneram para 2 anos de pré), então cada ponto da curva
+    abaixo agrega **4 simulações** (2 durações × 2 janelas) — o poder salta em
+    múltiplos de 0,25 e a curva pode até não ser monotônica. Isso não é bug: é a
+    resolução máxima que este desenho oferece, e é em si o resultado do ato.
+    Usamos permutação iid porque, nas janelas simuladas ($T \\le 5$), a block tem
+    no máximo 5 rotações (p mínimo 0,2 — poder zero por construção em α = 0,10).
 """)
 )
 
@@ -722,7 +780,7 @@ CELLS.append(
         estimator=Synth(),
         unit=UNIT, time=TIME, outcome=OUT,
         treated=TREATED,
-        durations=2,
+        durations=(1, 2),
         effect_sizes=(0.0, -0.05, -0.10, -0.15, -0.20, -0.30, -0.40),
         effect_type="multiplicative",
         lookback_window=2,
@@ -733,32 +791,46 @@ CELLS.append(
         rng=np.random.default_rng(35),
         on_error="record",
     )
-    curva = pwr.power_curve()
-    mde = pwr.mde(target_power=0.8)
+    # Agrega as duas durações: cada efeito fica com 4 simulações (2 × 2 janelas).
+    curva = (
+        pwr.simulations.group_by("effect_size")
+        .agg(
+            n=pl.len(),
+            n_falhas=pl.col("pvalue").is_null().sum(),
+            detectados=(pl.col("pvalue") <= pwr.alpha).sum(),
+        )
+        .with_columns(power=pl.col("detectados") / (pl.col("n") - pl.col("n_falhas")))
+        .sort("effect_size")
+    )
+    mde = pwr.mde(target_power=0.8, duration=2)
     print(curva)
-    print(f"\\nMDE (poder ≥ 0,8, α = 0,10): "
+    print(f"\\nMDE (poder ≥ 0,8, α = 0,10, duração 2): "
           f"{'não alcançado na grade simulada' if mde is None else f'{mde:+.0%} na taxa de mortalidade'}")
 """)
 )
 
 CELLS.append(
     code("""
-    # Curva de poder.
+    # "Curva" de poder — na resolução que o painel anual permite (4 sims/ponto).
     cd = curva.filter(pl.col("effect_size") != 0).sort("effect_size")
     fp = curva.filter(pl.col("effect_size") == 0)["power"]
     fig, ax = plt.subplots(figsize=(8, 4.4))
-    ax.plot([abs(e) for e in cd["effect_size"]], cd["power"],
-            color=COLOR_SYNTH, marker="o", lw=1.8)
+    xs = [abs(e) for e in cd["effect_size"]]
+    ax.plot(xs, cd["power"], color=COLOR_SYNTH, marker="o", lw=1.8)
+    for x, p, n in zip(xs, cd["power"], cd["n"]):
+        ax.annotate(f"n={n}", (x, p), xytext=(0, 7), textcoords="offset points",
+                    ha="center", fontsize=8, color=COLOR_TEXT)
     ax.axhline(0.8, color=COLOR_TEXT, ls="--", lw=0.9, alpha=0.6)
     ax.text(0.005, 0.815, "poder alvo 0,8", color=COLOR_TEXT, fontsize=9)
     if len(fp) and fp[0] is not None:
         ax.axhline(fp[0], color=COLOR_ALT, ls=":", lw=1.2)
         ax.text(0.005, float(fp[0]) + 0.015, f"taxa de falso positivo = {fp[0]:.2f}",
                 color=COLOR_ALT, fontsize=9)
-    ax.set_ylim(-0.02, 1.02)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
     ax.set_xlabel("Redução injetada na taxa de mortalidade (|efeito multiplicativo|)")
     ax.set_ylabel("Poder (taxa de detecção)")
-    ax.set_title("Poder do desenho com 5 anos de pré (conformal iid, α = 0,10)")
+    ax.set_title("Poder do desenho com 5 anos de pré (conformal iid, α = 0,10; degraus de 0,25)")
     plt.tight_layout(); plt.show()
 """)
 )
@@ -804,6 +876,10 @@ CELLS.append(
 
     **Não sustenta (limitações honestas).**
 
+    - **Modo demonstração**: enquanto o painel real do AEAT não for materializado
+      (`_fetch_aeat_nr35.py`), todos os números acima são de um painel simulado —
+      o notebook valida o *pipeline* (a verdade injetada é recuperada?), não a
+      NR-35. Nenhum valor deste modo pode ser citado como estatística oficial.
     - **5 anos de pré** — a restrição que organiza o notebook inteiro. Alongar para
       trás de 2008 cruza a quebra do NTEP (e a transição CNAE 1.0→2.0 no AEAT).
     - **Desfecho agregado**: mortalidade por *todas* as causas de acidente, não só

@@ -1,0 +1,565 @@
+setor,ano,taxa_mortalidade
+01 Agricultura e pecuária,2008,13.05
+01 Agricultura e pecuária,2009,14.871
+01 Agricultura e pecuária,2010,14.352
+01 Agricultura e pecuária,2011,14.322
+01 Agricultura e pecuária,2012,11.858
+01 Agricultura e pecuária,2013,11.608
+01 Agricultura e pecuária,2014,11.721
+01 Agricultura e pecuária,2015,11.408
+01 Agricultura e pecuária,2016,10.48
+01 Agricultura e pecuária,2017,13.072
+01 Agricultura e pecuária,2018,12.32
+01 Agricultura e pecuária,2019,12.379
+02 Produção florestal,2008,20.071
+02 Produção florestal,2009,22.122
+02 Produção florestal,2010,20.303
+02 Produção florestal,2011,22.44
+02 Produção florestal,2012,17.517
+02 Produção florestal,2013,17.256
+02 Produção florestal,2014,18.24
+02 Produção florestal,2015,13.124
+02 Produção florestal,2016,13.111
+02 Produção florestal,2017,14.967
+02 Produção florestal,2018,11.231
+02 Produção florestal,2019,11.666
+05-09 Indústrias extrativas,2008,27.199
+05-09 Indústrias extrativas,2009,29.876
+05-09 Indústrias extrativas,2010,29.539
+05-09 Indústrias extrativas,2011,27.106
+05-09 Indústrias extrativas,2012,25.544
+05-09 Indústrias extrativas,2013,26.588
+05-09 Indústrias extrativas,2014,21.957
+05-09 Indústrias extrativas,2015,22.586
+05-09 Indústrias extrativas,2016,25.115
+05-09 Indústrias extrativas,2017,23.146
+05-09 Indústrias extrativas,2018,19.382
+05-09 Indústrias extrativas,2019,21.706
+10 Alimentos,2008,6.255
+10 Alimentos,2009,6.384
+10 Alimentos,2010,5.49
+10 Alimentos,2011,6.313
+10 Alimentos,2012,5.928
+10 Alimentos,2013,6.798
+10 Alimentos,2014,6.06
+10 Alimentos,2015,6.04
+10 Alimentos,2016,6.181
+10 Alimentos,2017,5.926
+10 Alimentos,2018,4.941
+10 Alimentos,2019,4.653
+11 Bebidas,2008,6.753
+11 Bebidas,2009,6.799
+11 Bebidas,2010,5.674
+11 Bebidas,2011,5.534
+11 Bebidas,2012,5.347
+11 Bebidas,2013,5.418
+11 Bebidas,2014,3.591
+11 Bebidas,2015,2.948
+11 Bebidas,2016,3.135
+11 Bebidas,2017,3.449
+11 Bebidas,2018,3.038
+11 Bebidas,2019,4.152
+13 Têxteis,2008,3.254
+13 Têxteis,2009,2.891
+13 Têxteis,2010,2.644
+13 Têxteis,2011,2.445
+13 Têxteis,2012,2.718
+13 Têxteis,2013,2.112
+13 Têxteis,2014,2.227
+13 Têxteis,2015,2.066
+13 Têxteis,2016,2.076
+13 Têxteis,2017,2.211
+13 Têxteis,2018,2.004
+13 Têxteis,2019,2.178
+14 Confecção,2008,1.661
+14 Confecção,2009,1.307
+14 Confecção,2010,1.508
+14 Confecção,2011,1.473
+14 Confecção,2012,1.791
+14 Confecção,2013,1.444
+14 Confecção,2014,1.881
+14 Confecção,2015,0.913
+14 Confecção,2016,1.405
+14 Confecção,2017,1.279
+14 Confecção,2018,1.037
+14 Confecção,2019,1.179
+15 Couro e calçados,2008,3.163
+15 Couro e calçados,2009,2.21
+15 Couro e calçados,2010,2.259
+15 Couro e calçados,2011,2.255
+15 Couro e calçados,2012,2.135
+15 Couro e calçados,2013,2.25
+15 Couro e calçados,2014,2.301
+15 Couro e calçados,2015,2.027
+15 Couro e calçados,2016,2.262
+15 Couro e calçados,2017,1.885
+15 Couro e calçados,2018,2.3
+15 Couro e calçados,2019,2.2
+16 Madeira,2008,11.163
+16 Madeira,2009,10.73
+16 Madeira,2010,9.784
+16 Madeira,2011,11.689
+16 Madeira,2012,9.703
+16 Madeira,2013,10.238
+16 Madeira,2014,8.806
+16 Madeira,2015,8.781
+16 Madeira,2016,8.692
+16 Madeira,2017,9.613
+16 Madeira,2018,8.388
+16 Madeira,2019,8.858
+17 Celulose e papel,2008,5.972
+17 Celulose e papel,2009,7.364
+17 Celulose e papel,2010,5.988
+17 Celulose e papel,2011,5.855
+17 Celulose e papel,2012,5.156
+17 Celulose e papel,2013,5.496
+17 Celulose e papel,2014,4.159
+17 Celulose e papel,2015,3.273
+17 Celulose e papel,2016,3.531
+17 Celulose e papel,2017,4.975
+17 Celulose e papel,2018,4.297
+17 Celulose e papel,2019,5.124
+20 Químicos,2008,5.448
+20 Químicos,2009,4.336
+20 Químicos,2010,4.003
+20 Químicos,2011,4.327
+20 Químicos,2012,3.965
+20 Químicos,2013,5.042
+20 Químicos,2014,5.391
+20 Químicos,2015,3.366
+20 Químicos,2016,4.256
+20 Químicos,2017,5.668
+20 Químicos,2018,4.769
+20 Químicos,2019,3.869
+22 Borracha e plástico,2008,4.569
+22 Borracha e plástico,2009,4.443
+22 Borracha e plástico,2010,5.178
+22 Borracha e plástico,2011,4.554
+22 Borracha e plástico,2012,3.857
+22 Borracha e plástico,2013,3.761
+22 Borracha e plástico,2014,4.137
+22 Borracha e plástico,2015,2.653
+22 Borracha e plástico,2016,2.757
+22 Borracha e plástico,2017,2.991
+22 Borracha e plástico,2018,2.6
+22 Borracha e plástico,2019,2.522
+23 Minerais não-metálicos (prod.),2008,9.175
+23 Minerais não-metálicos (prod.),2009,9.895
+23 Minerais não-metálicos (prod.),2010,6.987
+23 Minerais não-metálicos (prod.),2011,9.72
+23 Minerais não-metálicos (prod.),2012,7.35
+23 Minerais não-metálicos (prod.),2013,8.176
+23 Minerais não-metálicos (prod.),2014,8.856
+23 Minerais não-metálicos (prod.),2015,6.96
+23 Minerais não-metálicos (prod.),2016,7.809
+23 Minerais não-metálicos (prod.),2017,8.493
+23 Minerais não-metálicos (prod.),2018,8.509
+23 Minerais não-metálicos (prod.),2019,7.234
+24 Metalurgia,2008,9.137
+24 Metalurgia,2009,10.596
+24 Metalurgia,2010,8.955
+24 Metalurgia,2011,8.102
+24 Metalurgia,2012,7.755
+24 Metalurgia,2013,6.659
+24 Metalurgia,2014,7.827
+24 Metalurgia,2015,6.26
+24 Metalurgia,2016,6.102
+24 Metalurgia,2017,7.035
+24 Metalurgia,2018,6.591
+24 Metalurgia,2019,7.113
+25 Produtos de metal,2008,5.854
+25 Produtos de metal,2009,5.506
+25 Produtos de metal,2010,5.202
+25 Produtos de metal,2011,6.256
+25 Produtos de metal,2012,5.031
+25 Produtos de metal,2013,5.232
+25 Produtos de metal,2014,5.741
+25 Produtos de metal,2015,5.497
+25 Produtos de metal,2016,5.624
+25 Produtos de metal,2017,5.135
+25 Produtos de metal,2018,4.66
+25 Produtos de metal,2019,3.676
+28 Máquinas e equipamentos,2008,4.854
+28 Máquinas e equipamentos,2009,4.064
+28 Máquinas e equipamentos,2010,4.118
+28 Máquinas e equipamentos,2011,3.315
+28 Máquinas e equipamentos,2012,4.431
+28 Máquinas e equipamentos,2013,4.192
+28 Máquinas e equipamentos,2014,3.786
+28 Máquinas e equipamentos,2015,3.899
+28 Máquinas e equipamentos,2016,4.278
+28 Máquinas e equipamentos,2017,4.349
+28 Máquinas e equipamentos,2018,3.282
+28 Máquinas e equipamentos,2019,3.147
+29 Veículos automotores,2008,3.577
+29 Veículos automotores,2009,4.101
+29 Veículos automotores,2010,3.732
+29 Veículos automotores,2011,4.368
+29 Veículos automotores,2012,3.025
+29 Veículos automotores,2013,2.722
+29 Veículos automotores,2014,3.892
+29 Veículos automotores,2015,3.558
+29 Veículos automotores,2016,2.517
+29 Veículos automotores,2017,3.623
+29 Veículos automotores,2018,3.037
+29 Veículos automotores,2019,2.304
+31 Móveis,2008,4.279
+31 Móveis,2009,5.509
+31 Móveis,2010,5.197
+31 Móveis,2011,5.959
+31 Móveis,2012,3.617
+31 Móveis,2013,3.728
+31 Móveis,2014,3.376
+31 Móveis,2015,3.206
+31 Móveis,2016,3.048
+31 Móveis,2017,4.183
+31 Móveis,2018,3.284
+31 Móveis,2019,3.497
+33 Manutenção de máquinas,2008,6.982
+33 Manutenção de máquinas,2009,7.792
+33 Manutenção de máquinas,2010,8.386
+33 Manutenção de máquinas,2011,7.735
+33 Manutenção de máquinas,2012,9.079
+33 Manutenção de máquinas,2013,8.346
+33 Manutenção de máquinas,2014,8.122
+33 Manutenção de máquinas,2015,5.626
+33 Manutenção de máquinas,2016,5.631
+33 Manutenção de máquinas,2017,7.166
+33 Manutenção de máquinas,2018,7.652
+33 Manutenção de máquinas,2019,7.966
+35 Eletricidade e gás,2008,11.971
+35 Eletricidade e gás,2009,11.027
+35 Eletricidade e gás,2010,9.028
+35 Eletricidade e gás,2011,9.125
+35 Eletricidade e gás,2012,9.334
+35 Eletricidade e gás,2013,9.938
+35 Eletricidade e gás,2014,8.196
+35 Eletricidade e gás,2015,8.015
+35 Eletricidade e gás,2016,9.089
+35 Eletricidade e gás,2017,8.721
+35 Eletricidade e gás,2018,8.956
+35 Eletricidade e gás,2019,9.683
+"36-39 Água, esgoto e resíduos",2008,11.538
+"36-39 Água, esgoto e resíduos",2009,13.033
+"36-39 Água, esgoto e resíduos",2010,10.343
+"36-39 Água, esgoto e resíduos",2011,10.36
+"36-39 Água, esgoto e resíduos",2012,10.366
+"36-39 Água, esgoto e resíduos",2013,8.152
+"36-39 Água, esgoto e resíduos",2014,8.763
+"36-39 Água, esgoto e resíduos",2015,7.541
+"36-39 Água, esgoto e resíduos",2016,6.197
+"36-39 Água, esgoto e resíduos",2017,4.508
+"36-39 Água, esgoto e resíduos",2018,6.518
+"36-39 Água, esgoto e resíduos",2019,7.221
+45 Comércio de veículos,2008,5.943
+45 Comércio de veículos,2009,6.099
+45 Comércio de veículos,2010,5.105
+45 Comércio de veículos,2011,4.434
+45 Comércio de veículos,2012,4.289
+45 Comércio de veículos,2013,4.911
+45 Comércio de veículos,2014,5.373
+45 Comércio de veículos,2015,3.716
+45 Comércio de veículos,2016,5.034
+45 Comércio de veículos,2017,5.375
+45 Comércio de veículos,2018,4.883
+45 Comércio de veículos,2019,3.909
+46 Comércio atacadista,2008,6.897
+46 Comércio atacadista,2009,6.396
+46 Comércio atacadista,2010,5.741
+46 Comércio atacadista,2011,5.492
+46 Comércio atacadista,2012,6.019
+46 Comércio atacadista,2013,6.089
+46 Comércio atacadista,2014,5.906
+46 Comércio atacadista,2015,4.935
+46 Comércio atacadista,2016,6.109
+46 Comércio atacadista,2017,5.924
+46 Comércio atacadista,2018,5.552
+46 Comércio atacadista,2019,5.981
+47 Comércio varejista,2008,3.155
+47 Comércio varejista,2009,3.384
+47 Comércio varejista,2010,3.509
+47 Comércio varejista,2011,3.417
+47 Comércio varejista,2012,2.786
+47 Comércio varejista,2013,2.823
+47 Comércio varejista,2014,2.814
+47 Comércio varejista,2015,2.738
+47 Comércio varejista,2016,2.491
+47 Comércio varejista,2017,2.415
+47 Comércio varejista,2018,2.313
+47 Comércio varejista,2019,2.691
+49 Transporte terrestre,2008,18.215
+49 Transporte terrestre,2009,17.612
+49 Transporte terrestre,2010,17.467
+49 Transporte terrestre,2011,18.041
+49 Transporte terrestre,2012,15.868
+49 Transporte terrestre,2013,15.033
+49 Transporte terrestre,2014,14.878
+49 Transporte terrestre,2015,13.073
+49 Transporte terrestre,2016,13.134
+49 Transporte terrestre,2017,13.652
+49 Transporte terrestre,2018,13.063
+49 Transporte terrestre,2019,14.728
+50 Transporte aquaviário,2008,17.15
+50 Transporte aquaviário,2009,15.617
+50 Transporte aquaviário,2010,16.703
+50 Transporte aquaviário,2011,19.895
+50 Transporte aquaviário,2012,12.375
+50 Transporte aquaviário,2013,15.652
+50 Transporte aquaviário,2014,15.73
+50 Transporte aquaviário,2015,16.399
+50 Transporte aquaviário,2016,13.872
+50 Transporte aquaviário,2017,18.714
+50 Transporte aquaviário,2018,15.994
+50 Transporte aquaviário,2019,14.168
+52 Armazenagem e aux. transporte,2008,8.987
+52 Armazenagem e aux. transporte,2009,9.082
+52 Armazenagem e aux. transporte,2010,7.603
+52 Armazenagem e aux. transporte,2011,7.831
+52 Armazenagem e aux. transporte,2012,7.439
+52 Armazenagem e aux. transporte,2013,8.31
+52 Armazenagem e aux. transporte,2014,7.759
+52 Armazenagem e aux. transporte,2015,6.707
+52 Armazenagem e aux. transporte,2016,6.755
+52 Armazenagem e aux. transporte,2017,6.568
+52 Armazenagem e aux. transporte,2018,7.289
+52 Armazenagem e aux. transporte,2019,6.929
+53 Correio e entregas,2008,3.249
+53 Correio e entregas,2009,2.809
+53 Correio e entregas,2010,2.793
+53 Correio e entregas,2011,3.233
+53 Correio e entregas,2012,3.725
+53 Correio e entregas,2013,3.816
+53 Correio e entregas,2014,3.396
+53 Correio e entregas,2015,1.558
+53 Correio e entregas,2016,1.258
+53 Correio e entregas,2017,1.59
+53 Correio e entregas,2018,2.068
+53 Correio e entregas,2019,2.215
+55 Alojamento,2008,2.497
+55 Alojamento,2009,2.342
+55 Alojamento,2010,2.683
+55 Alojamento,2011,2.015
+55 Alojamento,2012,1.598
+55 Alojamento,2013,2.007
+55 Alojamento,2014,2.27
+55 Alojamento,2015,2.301
+55 Alojamento,2016,2.241
+55 Alojamento,2017,2.203
+55 Alojamento,2018,1.739
+55 Alojamento,2019,2.213
+56 Alimentação (serviços),2008,1.77
+56 Alimentação (serviços),2009,2.064
+56 Alimentação (serviços),2010,1.302
+56 Alimentação (serviços),2011,1.827
+56 Alimentação (serviços),2012,1.582
+56 Alimentação (serviços),2013,1.54
+56 Alimentação (serviços),2014,1.845
+56 Alimentação (serviços),2015,1.254
+56 Alimentação (serviços),2016,1.532
+56 Alimentação (serviços),2017,1.464
+56 Alimentação (serviços),2018,1.733
+56 Alimentação (serviços),2019,1.339
+61 Telecomunicações,2008,6.145
+61 Telecomunicações,2009,7.668
+61 Telecomunicações,2010,6.876
+61 Telecomunicações,2011,5.921
+61 Telecomunicações,2012,7.224
+61 Telecomunicações,2013,6.623
+61 Telecomunicações,2014,5.62
+61 Telecomunicações,2015,5.144
+61 Telecomunicações,2016,5.009
+61 Telecomunicações,2017,5.009
+61 Telecomunicações,2018,4.889
+61 Telecomunicações,2019,7.349
+62-63 TI e informação,2008,1.594
+62-63 TI e informação,2009,1.4
+62-63 TI e informação,2010,1.042
+62-63 TI e informação,2011,1.355
+62-63 TI e informação,2012,1.279
+62-63 TI e informação,2013,1.315
+62-63 TI e informação,2014,0.936
+62-63 TI e informação,2015,0.927
+62-63 TI e informação,2016,0.807
+62-63 TI e informação,2017,0.88
+62-63 TI e informação,2018,0.785
+62-63 TI e informação,2019,0.346
+64-66 Financeiras e seguros,2008,1.66
+64-66 Financeiras e seguros,2009,1.635
+64-66 Financeiras e seguros,2010,0.668
+64-66 Financeiras e seguros,2011,1.013
+64-66 Financeiras e seguros,2012,0.603
+64-66 Financeiras e seguros,2013,0.924
+64-66 Financeiras e seguros,2014,1.059
+64-66 Financeiras e seguros,2015,0.447
+64-66 Financeiras e seguros,2016,0.781
+64-66 Financeiras e seguros,2017,0.838
+64-66 Financeiras e seguros,2018,1.072
+64-66 Financeiras e seguros,2019,0.684
+68 Imobiliárias,2008,2.749
+68 Imobiliárias,2009,2.863
+68 Imobiliárias,2010,2.049
+68 Imobiliárias,2011,2.578
+68 Imobiliárias,2012,2.756
+68 Imobiliárias,2013,2.837
+68 Imobiliárias,2014,2.358
+68 Imobiliárias,2015,3.019
+68 Imobiliárias,2016,3.199
+68 Imobiliárias,2017,2.405
+68 Imobiliárias,2018,1.786
+68 Imobiliárias,2019,1.894
+69-75 Serviços profissionais,2008,2.259
+69-75 Serviços profissionais,2009,2.69
+69-75 Serviços profissionais,2010,2.08
+69-75 Serviços profissionais,2011,1.775
+69-75 Serviços profissionais,2012,1.301
+69-75 Serviços profissionais,2013,1.76
+69-75 Serviços profissionais,2014,1.969
+69-75 Serviços profissionais,2015,1.813
+69-75 Serviços profissionais,2016,1.919
+69-75 Serviços profissionais,2017,2.014
+69-75 Serviços profissionais,2018,1.818
+69-75 Serviços profissionais,2019,2.072
+77 Aluguéis não-imob.,2008,5.542
+77 Aluguéis não-imob.,2009,5.315
+77 Aluguéis não-imob.,2010,5.95
+77 Aluguéis não-imob.,2011,7.272
+77 Aluguéis não-imob.,2012,4.482
+77 Aluguéis não-imob.,2013,5.12
+77 Aluguéis não-imob.,2014,6.113
+77 Aluguéis não-imob.,2015,6.022
+77 Aluguéis não-imob.,2016,6.674
+77 Aluguéis não-imob.,2017,5.969
+77 Aluguéis não-imob.,2018,5.132
+77 Aluguéis não-imob.,2019,6.321
+78 Agenciamento de mão de obra,2008,6.245
+78 Agenciamento de mão de obra,2009,5.675
+78 Agenciamento de mão de obra,2010,4.773
+78 Agenciamento de mão de obra,2011,3.965
+78 Agenciamento de mão de obra,2012,4.288
+78 Agenciamento de mão de obra,2013,5.149
+78 Agenciamento de mão de obra,2014,4.897
+78 Agenciamento de mão de obra,2015,3.971
+78 Agenciamento de mão de obra,2016,3.249
+78 Agenciamento de mão de obra,2017,3.915
+78 Agenciamento de mão de obra,2018,3.527
+78 Agenciamento de mão de obra,2019,3.812
+80 Vigilância e segurança,2008,8.281
+80 Vigilância e segurança,2009,8.507
+80 Vigilância e segurança,2010,8.419
+80 Vigilância e segurança,2011,8.694
+80 Vigilância e segurança,2012,7.232
+80 Vigilância e segurança,2013,7.43
+80 Vigilância e segurança,2014,7.083
+80 Vigilância e segurança,2015,5.336
+80 Vigilância e segurança,2016,5.584
+80 Vigilância e segurança,2017,7.378
+80 Vigilância e segurança,2018,7.656
+80 Vigilância e segurança,2019,6.598
+81 Serviços p/ edifícios,2008,4.813
+81 Serviços p/ edifícios,2009,5.058
+81 Serviços p/ edifícios,2010,4.264
+81 Serviços p/ edifícios,2011,4.436
+81 Serviços p/ edifícios,2012,3.44
+81 Serviços p/ edifícios,2013,3.239
+81 Serviços p/ edifícios,2014,5.127
+81 Serviços p/ edifícios,2015,3.857
+81 Serviços p/ edifícios,2016,3.596
+81 Serviços p/ edifícios,2017,4.056
+81 Serviços p/ edifícios,2018,3.775
+81 Serviços p/ edifícios,2019,3.957
+82 Serviços de escritório,2008,2.747
+82 Serviços de escritório,2009,3.05
+82 Serviços de escritório,2010,2.879
+82 Serviços de escritório,2011,2.311
+82 Serviços de escritório,2012,2.558
+82 Serviços de escritório,2013,2.393
+82 Serviços de escritório,2014,2.57
+82 Serviços de escritório,2015,2.096
+82 Serviços de escritório,2016,1.626
+82 Serviços de escritório,2017,1.527
+82 Serviços de escritório,2018,1.627
+82 Serviços de escritório,2019,2.591
+84 Administração pública,2008,2.062
+84 Administração pública,2009,2.424
+84 Administração pública,2010,2.367
+84 Administração pública,2011,1.856
+84 Administração pública,2012,2.038
+84 Administração pública,2013,1.585
+84 Administração pública,2014,1.609
+84 Administração pública,2015,1.477
+84 Administração pública,2016,1.602
+84 Administração pública,2017,1.827
+84 Administração pública,2018,1.752
+84 Administração pública,2019,1.671
+85 Educação,2008,1.129
+85 Educação,2009,1.248
+85 Educação,2010,1.171
+85 Educação,2011,1.464
+85 Educação,2012,1.127
+85 Educação,2013,0.514
+85 Educação,2014,0.638
+85 Educação,2015,0.759
+85 Educação,2016,0.814
+85 Educação,2017,0.72
+85 Educação,2018,0.912
+85 Educação,2019,0.787
+86 Saúde humana,2008,1.514
+86 Saúde humana,2009,1.248
+86 Saúde humana,2010,1.164
+86 Saúde humana,2011,1.231
+86 Saúde humana,2012,1.162
+86 Saúde humana,2013,1.331
+86 Saúde humana,2014,1.71
+86 Saúde humana,2015,1.275
+86 Saúde humana,2016,1.297
+86 Saúde humana,2017,1.414
+86 Saúde humana,2018,1.054
+86 Saúde humana,2019,1.034
+87-88 Assistência social,2008,2.015
+87-88 Assistência social,2009,1.492
+87-88 Assistência social,2010,1.117
+87-88 Assistência social,2011,1.275
+87-88 Assistência social,2012,0.647
+87-88 Assistência social,2013,1.044
+87-88 Assistência social,2014,1.217
+87-88 Assistência social,2015,1.005
+87-88 Assistência social,2016,0.907
+87-88 Assistência social,2017,0.985
+87-88 Assistência social,2018,1.3
+87-88 Assistência social,2019,1.126
+"90-93 Artes, esporte e recreação",2008,3.73
+"90-93 Artes, esporte e recreação",2009,4.064
+"90-93 Artes, esporte e recreação",2010,2.923
+"90-93 Artes, esporte e recreação",2011,2.476
+"90-93 Artes, esporte e recreação",2012,2.538
+"90-93 Artes, esporte e recreação",2013,2.537
+"90-93 Artes, esporte e recreação",2014,2.682
+"90-93 Artes, esporte e recreação",2015,1.383
+"90-93 Artes, esporte e recreação",2016,2.032
+"90-93 Artes, esporte e recreação",2017,3.413
+"90-93 Artes, esporte e recreação",2018,2.817
+"90-93 Artes, esporte e recreação",2019,2.199
+94-96 Outros serviços,2008,3.133
+94-96 Outros serviços,2009,2.967
+94-96 Outros serviços,2010,2.36
+94-96 Outros serviços,2011,2.314
+94-96 Outros serviços,2012,1.721
+94-96 Outros serviços,2013,1.885
+94-96 Outros serviços,2014,2.558
+94-96 Outros serviços,2015,2.444
+94-96 Outros serviços,2016,2.594
+94-96 Outros serviços,2017,2.622
+94-96 Outros serviços,2018,2.755
+94-96 Outros serviços,2019,2.133
+Construção,2008,16.881
+Construção,2009,18.061
+Construção,2010,17.368
+Construção,2011,16.578
+Construção,2012,13.738
+Construção,2013,13.456
+Construção,2014,13.144
+Construção,2015,10.314
+Construção,2016,10.833
+Construção,2017,11.686
+Construção,2018,10.843
+Construção,2019,9.812
