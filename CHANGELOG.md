@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `conformal_test` / `ConformalTestResult` — the transparent counterpart of
+  `conformal_pvalue`: same test, bit-identical p-value, but returning the
+  intermediate quantities between the refit-under-null residuals and the
+  scalar p-value — the observed statistic, the permutation reference
+  distribution it is ranked against (one statistic per permutation), the null
+  residuals, and the p-value convention — so the observed post-period
+  behaviour can be *shown* against the permutation distribution (histogram +
+  observed line) instead of collapsing straight to `p`.
+- Flexible permutation blocks: `conformal_pvalue`, `conformal_test`,
+  `conformal_interval` and `simulate_power` accept `block_size`. With
+  `permutation_type="block"`, an integer `block_size` switches from the
+  deterministic cyclic-shift scheme to `ns` random shuffles of contiguous
+  length-`block_size` blocks (within-block order preserved, add-one p-value
+  convention, requires `rng`) — a caller-tunable middle ground between `iid`
+  (`block_size=1` is equivalent) and the cyclic shifts, for serially
+  dependent residuals when the `1/T` granularity of the deterministic scheme
+  is too coarse. `block_size=None` (default) keeps the existing deterministic
+  scheme, unchanged and still exactly R-parity-tested.
+- `adjust_pvalues` — multiple-testing adjustment for collections of conformal
+  p-values (per placebo window, candidate treated set, or outcome): Holm
+  (default), Bonferroni, and Benjamini-Hochberg, matching R's `p.adjust`
+  (`"holm"`, `"bonferroni"`, `"BH"`) and returned in input order.
+
 - `augsynth_py.power` — simulation-based power analysis for a given treated
   set (v0.4 milestone). `simulate_power` runs GeoLift-style placebo-in-time
   simulations: sliding pseudo-treatment windows at the end of the panel

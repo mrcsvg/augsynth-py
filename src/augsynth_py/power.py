@@ -288,6 +288,7 @@ def simulate_power(
     lookback_window: int = 1,
     alpha: float = 0.1,
     permutation_type: PermutationType = "block",
+    block_size: int | None = None,
     side: Side = "two-sided",
     ns: int = 1000,
     rng: np.random.Generator | None = None,
@@ -339,19 +340,29 @@ def simulate_power(
         aggregation can override it without re-simulating.
     permutation_type : {"block", "iid"}, optional
         Conformal permutation scheme (GeoLift's ``conformal_type``).
-        ``"block"`` (default) is deterministic and needs no ``rng``.
+        ``"block"`` (default) with ``block_size=None`` is deterministic and
+        needs no ``rng``.
+    block_size : int or None, optional
+        Block length for the random block-shuffle scheme of
+        :func:`~augsynth_py.inference.conformal_pvalue` (see there for
+        semantics); ``None`` (default) keeps the deterministic cyclic-shift
+        scheme. Only valid with ``permutation_type="block"``. Each window has
+        its own total length ``T``, so ``block_size`` must be smaller than the
+        *shortest* simulated window (``min(n_pre_periods) + duration``);
+        violations surface per simulation, per ``on_error``.
     side : {"two-sided", "left", "right"}, optional
         Test direction (GeoLift's ``side_of_test``; its ``"one_sided"`` with
         positive lifts corresponds to ``"right"``).
     ns : int, optional
-        Number of permutations for ``permutation_type="iid"``; ignored for
-        ``"block"``.
+        Number of permutations for the random schemes (``"iid"``, or
+        ``"block"`` with a ``block_size``); ignored by the deterministic
+        cyclic-shift scheme.
     rng : numpy.random.Generator, optional
-        Source of per-simulation seeds for ``permutation_type="iid"``. Each
+        Source of per-simulation seeds for the random schemes. Each
         simulation draws p-values from an independent generator seeded up
         front in task order, so results are reproducible for a given ``rng``
-        regardless of ``n_jobs``. Ignored for ``"block"``; a fresh
-        unseeded generator is used when omitted.
+        regardless of ``n_jobs``. Ignored by the deterministic cyclic-shift
+        scheme; a fresh unseeded generator is used when omitted.
     n_jobs : int, optional
         Parallel workers for the simulation grid, forwarded to
         :class:`joblib.Parallel` (``-1`` uses all cores). Defaults to 1.
@@ -374,7 +385,8 @@ def simulate_power(
         or duplicated effect sizes, a multiplicative effect at or below -1,
         non-positive durations or duplicates, ``lookback_window < 1``,
         ``alpha`` outside ``(0, 1)``, an unknown ``effect_type`` or
-        ``on_error``, or a panel too short for the requested grid
+        ``on_error``, a ``block_size`` below 1 or combined with
+        ``permutation_type="iid"``, or a panel too short for the requested grid
         (``T >= max(durations) + lookback_window`` is required so every
         window keeps at least one pre-period).
 
@@ -423,6 +435,15 @@ def simulate_power(
             "multiplicative effect sizes must be > -1 (a lift of -1 zeroes the outcome)."
         )
 
+    if block_size is not None:
+        if permutation_type != "block":
+            raise ValueError(
+                "block_size applies to permutation_type='block' only; use "
+                "permutation_type='block' with block_size for random block shuffles."
+            )
+        if block_size < 1:
+            raise ValueError(f"block_size must be >= 1, got {block_size}.")
+
     if lookback_window < 1:
         raise ValueError(f"lookback_window must be >= 1, got {lookback_window}.")
     if not 0.0 < alpha < 1.0:
@@ -455,7 +476,9 @@ def simulate_power(
         for e in effect_list:
             tasks.extend(_Task(d, e, w, None) for w in windows)
 
-    if permutation_type == "iid":
+    # Random permutation schemes ("iid", or "block" with a block_size) need a
+    # per-task generator; the deterministic cyclic-shift scheme does not.
+    if permutation_type == "iid" or block_size is not None:
         master = rng if rng is not None else np.random.default_rng()
         seeds = master.integers(0, 2**63 - 1, size=len(tasks))
         tasks = [task._replace(seed=int(s)) for task, s in zip(tasks, seeds, strict=True)]
@@ -482,6 +505,7 @@ def simulate_power(
                 treated_list,
                 effect_type,
                 permutation_type,
+                block_size,
                 side,
                 ns,
                 record,
@@ -502,6 +526,7 @@ def simulate_power(
                     treated_list,
                     effect_type,
                     permutation_type,
+                    block_size,
                     side,
                     ns,
                     record,
@@ -596,6 +621,7 @@ def _run_one(
     treated_list: list[Any],
     effect_type: EffectType,
     permutation_type: PermutationType,
+    block_size: int | None,
     side: Side,
     ns: int,
     record_errors: bool,
@@ -640,7 +666,13 @@ def _run_one(
         )
         task_rng = np.random.default_rng(task.seed) if task.seed is not None else None
         pvalue = conformal_pvalue(
-            fitted, 0.0, permutation_type=permutation_type, side=side, ns=ns, rng=task_rng
+            fitted,
+            0.0,
+            permutation_type=permutation_type,
+            block_size=block_size,
+            side=side,
+            ns=ns,
+            rng=task_rng,
         )
     # Broad on purpose: any solver/CV/validation failure in this cell either
     # propagates (on_error="raise") or becomes an `error` row ("record").
