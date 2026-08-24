@@ -85,46 +85,92 @@ EDITIONS: dict[int, dict[str, object]] = {
 
 # CNAE 2.0 divisões (IBGE), short labels used as unit names in the panel.
 CNAE_DIVISOES: dict[str, str] = {
-    "01": "01 Agricultura e pecuária", "02": "02 Produção florestal",
-    "03": "03 Pesca e aquicultura", "05": "05 Extração de carvão",
-    "06": "06 Extração de petróleo e gás", "07": "07 Minerais metálicos",
-    "08": "08 Minerais não-metálicos (extr.)", "09": "09 Apoio à extração",
-    "10": "10 Alimentos", "11": "11 Bebidas", "12": "12 Fumo",
-    "13": "13 Têxteis", "14": "14 Confecção", "15": "15 Couro e calçados",
-    "16": "16 Madeira", "17": "17 Celulose e papel", "18": "18 Impressão",
-    "19": "19 Coque e petróleo (deriv.)", "20": "20 Químicos",
-    "21": "21 Farmacêuticos", "22": "22 Borracha e plástico",
-    "23": "23 Minerais não-metálicos (prod.)", "24": "24 Metalurgia",
-    "25": "25 Produtos de metal", "26": "26 Informática e eletrônicos",
-    "27": "27 Máquinas e mat. elétricos", "28": "28 Máquinas e equipamentos",
-    "29": "29 Veículos automotores", "30": "30 Outros equip. de transporte",
-    "31": "31 Móveis", "32": "32 Produtos diversos",
-    "33": "33 Manutenção de máquinas", "35": "35 Eletricidade e gás",
-    "36": "36 Água", "37": "37 Esgoto", "38": "38 Resíduos",
-    "39": "39 Descontaminação", "41": "41 Construção de edifícios",
-    "42": "42 Obras de infraestrutura", "43": "43 Serviços p/ construção",
-    "45": "45 Comércio de veículos", "46": "46 Comércio atacadista",
-    "47": "47 Comércio varejista", "49": "49 Transporte terrestre",
-    "50": "50 Transporte aquaviário", "51": "51 Transporte aéreo",
-    "52": "52 Armazenagem e aux. transporte", "53": "53 Correio e entregas",
-    "55": "55 Alojamento", "56": "56 Alimentação (serviços)",
-    "58": "58 Edição", "59": "59 Cinema e som", "60": "60 Rádio e TV",
-    "61": "61 Telecomunicações", "62": "62 TI (serviços)",
-    "63": "63 Serviços de informação", "64": "64 Serviços financeiros",
-    "65": "65 Seguros e previdência", "66": "66 Aux. financeiros",
-    "68": "68 Imobiliárias", "69": "69 Jurídicas e contábeis",
-    "70": "70 Consultoria empresarial", "71": "71 Arquitetura e engenharia",
-    "72": "72 P&D", "73": "73 Publicidade", "74": "74 Outras profissionais",
-    "75": "75 Veterinária", "77": "77 Aluguéis não-imob.",
-    "78": "78 Agenciamento de mão de obra", "79": "79 Agências de viagens",
-    "80": "80 Vigilância e segurança", "81": "81 Serviços p/ edifícios",
-    "82": "82 Serviços de escritório", "84": "84 Administração pública",
-    "85": "85 Educação", "86": "86 Saúde humana",
-    "87": "87 Assistência social (aloj.)", "88": "88 Assistência social",
-    "90": "90 Artes e espetáculos", "91": "91 Patrimônio cultural",
-    "92": "92 Jogos de azar", "93": "93 Esporte e recreação",
-    "94": "94 Org. associativas", "95": "95 Reparação de bens pessoais",
-    "96": "96 Serviços pessoais", "97": "97 Serviços domésticos",
+    "01": "01 Agricultura e pecuária",
+    "02": "02 Produção florestal",
+    "03": "03 Pesca e aquicultura",
+    "05": "05 Extração de carvão",
+    "06": "06 Extração de petróleo e gás",
+    "07": "07 Minerais metálicos",
+    "08": "08 Minerais não-metálicos (extr.)",
+    "09": "09 Apoio à extração",
+    "10": "10 Alimentos",
+    "11": "11 Bebidas",
+    "12": "12 Fumo",
+    "13": "13 Têxteis",
+    "14": "14 Confecção",
+    "15": "15 Couro e calçados",
+    "16": "16 Madeira",
+    "17": "17 Celulose e papel",
+    "18": "18 Impressão",
+    "19": "19 Coque e petróleo (deriv.)",
+    "20": "20 Químicos",
+    "21": "21 Farmacêuticos",
+    "22": "22 Borracha e plástico",
+    "23": "23 Minerais não-metálicos (prod.)",
+    "24": "24 Metalurgia",
+    "25": "25 Produtos de metal",
+    "26": "26 Informática e eletrônicos",
+    "27": "27 Máquinas e mat. elétricos",
+    "28": "28 Máquinas e equipamentos",
+    "29": "29 Veículos automotores",
+    "30": "30 Outros equip. de transporte",
+    "31": "31 Móveis",
+    "32": "32 Produtos diversos",
+    "33": "33 Manutenção de máquinas",
+    "35": "35 Eletricidade e gás",
+    "36": "36 Água",
+    "37": "37 Esgoto",
+    "38": "38 Resíduos",
+    "39": "39 Descontaminação",
+    "41": "41 Construção de edifícios",
+    "42": "42 Obras de infraestrutura",
+    "43": "43 Serviços p/ construção",
+    "45": "45 Comércio de veículos",
+    "46": "46 Comércio atacadista",
+    "47": "47 Comércio varejista",
+    "49": "49 Transporte terrestre",
+    "50": "50 Transporte aquaviário",
+    "51": "51 Transporte aéreo",
+    "52": "52 Armazenagem e aux. transporte",
+    "53": "53 Correio e entregas",
+    "55": "55 Alojamento",
+    "56": "56 Alimentação (serviços)",
+    "58": "58 Edição",
+    "59": "59 Cinema e som",
+    "60": "60 Rádio e TV",
+    "61": "61 Telecomunicações",
+    "62": "62 TI (serviços)",
+    "63": "63 Serviços de informação",
+    "64": "64 Serviços financeiros",
+    "65": "65 Seguros e previdência",
+    "66": "66 Aux. financeiros",
+    "68": "68 Imobiliárias",
+    "69": "69 Jurídicas e contábeis",
+    "70": "70 Consultoria empresarial",
+    "71": "71 Arquitetura e engenharia",
+    "72": "72 P&D",
+    "73": "73 Publicidade",
+    "74": "74 Outras profissionais",
+    "75": "75 Veterinária",
+    "77": "77 Aluguéis não-imob.",
+    "78": "78 Agenciamento de mão de obra",
+    "79": "79 Agências de viagens",
+    "80": "80 Vigilância e segurança",
+    "81": "81 Serviços p/ edifícios",
+    "82": "82 Serviços de escritório",
+    "84": "84 Administração pública",
+    "85": "85 Educação",
+    "86": "86 Saúde humana",
+    "87": "87 Assistência social (aloj.)",
+    "88": "88 Assistência social",
+    "90": "90 Artes e espetáculos",
+    "91": "91 Patrimônio cultural",
+    "92": "92 Jogos de azar",
+    "93": "93 Esporte e recreação",
+    "94": "94 Org. associativas",
+    "95": "95 Reparação de bens pessoais",
+    "96": "96 Serviços pessoais",
+    "97": "97 Serviços domésticos",
     "99": "99 Organismos internacionais",
 }
 
@@ -135,6 +181,7 @@ CNAE_DIVISOES: dict[str, str] = {
 # not run against the real workbooks yet. Validate TOTAL rows against the
 # published PDFs on first run.)
 # ---------------------------------------------------------------------------
+
 
 def _download(url: str) -> bytes:
     req = Request(url, headers={"User-Agent": "augsynth-py/aeat-fetch"})
@@ -160,11 +207,14 @@ def _find_subsecao_b_brasil(zf: zipfile.ZipFile) -> str:
         except Exception:
             continue
         text = " ".join(str(v) for v in head.to_numpy().ravel()).lower()
-        if "liquidados" in text and "cnae" in text and "consequência" in text.replace("conseqüência", "consequência"):
+        if (
+            "liquidados" in text
+            and "cnae" in text
+            and "consequência" in text.replace("conseqüência", "consequência")
+        ):
             return n
     raise FileNotFoundError(
-        "Tabela 29.1 (Subseção B, Brasil x CNAE) não encontrada no ZIP; "
-        f"membros: {names[:10]}..."
+        f"Tabela 29.1 (Subseção B, Brasil x CNAE) não encontrada no ZIP; membros: {names[:10]}..."
     )
 
 
@@ -331,25 +381,32 @@ def build_demo_panel() -> None:
             taxa = taxa_cf * (1.0 + DEMO_TRUE_EFFECT.get(yr, 0.0)) if treated else taxa_cf
             rows.append({"setor": nome, "ano": yr, "taxa_mortalidade": round(float(taxa), 3)})
             if treated:
-                truth_rows.append({
-                    "ano": yr,
-                    "taxa_contrafactual": round(float(taxa_cf), 3),
-                    "efeito_verdadeiro": DEMO_TRUE_EFFECT.get(yr, 0.0),
-                })
+                truth_rows.append(
+                    {
+                        "ano": yr,
+                        "taxa_contrafactual": round(float(taxa_cf), 3),
+                        "efeito_verdadeiro": DEMO_TRUE_EFFECT.get(yr, 0.0),
+                    }
+                )
 
     pl.DataFrame(rows).sort(["setor", "ano"]).write_csv(DEMO_CSV)
     pl.DataFrame(truth_rows).write_csv(DEMO_TRUTH_CSV)
-    print(f"Wrote {DEMO_CSV} — {len(rows)} linhas "
-          f"({len(_DEMO_DONORS)} doadores + 1 tratada × {len(years)} anos).")
+    print(
+        f"Wrote {DEMO_CSV} — {len(rows)} linhas "
+        f"({len(_DEMO_DONORS)} doadores + 1 tratada × {len(years)} anos)."
+    )
     print(f"Wrote {DEMO_TRUTH_CSV} — contrafactual verdadeiro da tratada.")
-    print("ATENÇÃO: dados SIMULADOS (efeito verdadeiro injetado: "
-          f"{DEMO_TRUE_EFFECT[2013]:+.0%} em 2013, {DEMO_TRUE_EFFECT[2014]:+.0%} de 2014 em diante).")
+    print(
+        "ATENÇÃO: dados SIMULADOS (efeito verdadeiro injetado: "
+        f"{DEMO_TRUE_EFFECT[2013]:+.0%} em 2013, {DEMO_TRUE_EFFECT[2014]:+.0%} de 2014 em diante)."
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--demo", action="store_true",
-                        help="gera o painel simulado de demonstração")
+    parser.add_argument(
+        "--demo", action="store_true", help="gera o painel simulado de demonstração"
+    )
     args = parser.parse_args()
     if args.demo:
         build_demo_panel()
