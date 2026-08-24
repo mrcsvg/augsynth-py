@@ -148,21 +148,28 @@ CELLS.append(
     ## Ato 1 — O relógio institucional: publicação ≠ vigência
 
     A NR-35 foi aprovada pela **Portaria SIT n.º 313, de 23/03/2012** (DOU de
-    27/03/2012). Mas a portaria **não entrou em vigor na publicação**: o seu art. 2.º
-    escalonou a vigência em duas ondas contadas da publicação —
+    27/03/2012). Mas as obrigações **não entraram em vigor na publicação** — o art. 3.º
+    da portaria escalonou a vigência em duas ondas contadas da publicação:
+
+    > *"As obrigações estabelecidas nesta Norma entram em vigor seis meses após sua
+    > publicação, exceto o capítulo 3 e o subitem 6.4, que entram em vigor doze meses
+    > após a data de publicação desta Portaria."* — Portaria SIT 313/2012, art. 3.º
 
     | Marco | Data | O que passa a valer |
     |---|---|---|
     | Publicação (DOU) | 27/03/2012 | nada ainda — prazo começa a correr |
-    | Vigência geral (6 meses) | 27/09/2012 | corpo da norma (análise de risco, PT, EPI, ancoragem) |
-    | Vigência plena (12 meses) | 27/03/2013 | itens de capacitação (treinamento obrigatório) |
+    | Vigência geral (6 meses) | 27/09/2012 | corpo da norma (análise de risco, PT, sistemas de proteção, ancoragem) |
+    | Vigência plena (12 meses) | 27/03/2013 | cap. 35.3 (**capacitação e treinamento**) e 35.6.4 (equipes de resgate) |
 
     Com dados **anuais**, isso significa:
 
-    - **2012 é um ano híbrido** — 9 meses sem norma nenhuma, 3 meses de vigência
-      parcial. Não é pré limpo nem pós limpo.
+    - **2012 é um ano híbrido** — ~9 meses sem norma nenhuma, ~3 meses de vigência
+      parcial e **zero dias de capacitação obrigatória** (o canal causal mais
+      plausível para queda de óbitos). Não é pré limpo nem pós limpo.
     - **2013 é o primeiro ano-calendário inteiramente sob a norma** (e, a partir de
-      março, sob a norma *completa*, capacitação inclusa).
+      27/03, sob a norma *completa*, capacitação inclusa).
+    - A rigor, **2014 é o primeiro ano com a norma completa de janeiro a dezembro**
+      — o cenário de "dose plena" no Ato 6.
 
     Por isso o desenho principal usa **T₀ = 2013** — a vigência, não a publicação.
     O Ato 6 quantifica o quanto o deslocamento de um ano muda o resultado, e trata
@@ -575,11 +582,14 @@ CELLS.append(
     parte do efeito e o ATT estimado fica **conservador** (viés contra encontrar
     efeito).
 
-    Três cenários, mesmo pipeline:
+    Quatro cenários, mesmo pipeline:
 
     - **A (principal)** — T₀ = 2013, 2012 no pré.
     - **B (publicação)** — T₀ = 2012.
     - **C (híbrido fora)** — T₀ = 2013, ano de 2012 removido do painel.
+    - **D (dose plena)** — T₀ = 2014, primeiro ano-calendário integral sob a norma
+      completa (capacitação vigente desde 27/03/2013); 2012–2013 ficam no pré, o
+      que torna D conservador se o efeito já começou em 2013.
 """)
 )
 
@@ -589,6 +599,7 @@ CELLS.append(
         "A: T0=2013 (vigência)": (panel, T0_VIGENCIA),
         "B: T0=2012 (publicação)": (panel, T0_PUBLICACAO),
         "C: T0=2013, sem 2012": (panel.filter(pl.col(TIME) != 2012), T0_VIGENCIA),
+        "D: T0=2014 (dose plena)": (panel, 2014),
     }
 
     linhas = []
@@ -622,6 +633,7 @@ CELLS.append(
         "A: T0=2013 (vigência)": (COLOR_AUGMENTED, "-", 2.4),
         "B: T0=2012 (publicação)": (COLOR_ALT, "--", 1.8),
         "C: T0=2013, sem 2012": (COLOR_SYNTH, ":", 1.8),
+        "D: T0=2014 (dose plena)": (COLOR_DONOR, "-.", 1.8),
     }
     for nome, (_, f_aug) in fits_cen.items():
         cor, ls, lw = estilos[nome]
@@ -795,9 +807,11 @@ CELLS.append(
     - **5 anos de pré** — a restrição que organiza o notebook inteiro. Alongar para
       trás de 2008 cruza a quebra do NTEP (e a transição CNAE 1.0→2.0 no AEAT).
     - **Desfecho agregado**: mortalidade por *todas* as causas de acidente, não só
-      quedas de altura. O AEAT público não cruza CID × CNAE nesse nível; um recorte
-      por quedas (CID W10–W19) exigiria microdados. Efeito da NR-35 diluído ⇒ viés
-      conservador.
+      quedas de altura. O AEAT não publica CID × CNAE (a Subseção C é CID × UF), e o
+      CID da CAT é a natureza da lesão (cap. XIX, S00–T98), não a causa externa —
+      quedas se identificam pelo campo *agente causador* dos microdados de CAT do
+      INSS, disponíveis só de ~2018 em diante (servem para caracterizar o mecanismo
+      no pós, não para o painel). Efeito da NR-35 diluído ⇒ viés conservador.
     - **Cobertura previdenciária**: o AEAT enxerga o mercado formal
       celetista (e, na taxa, o denominador de vínculos) — a informalidade da
       construção fica fora, e é plausivelmente onde a norma menos pega.
@@ -814,7 +828,9 @@ CELLS.append(
       Conformal Inference Method for Counterfactual and Synthetic Controls*. JASA.
     - Brasil, MTE. **Portaria SIT n.º 313, de 23/03/2012** (NR-35 — Trabalho em
       Altura), DOU 27/03/2012.
-    - AEAT — Anuário Estatístico de Acidentes do Trabalho (vários anos).
+      [PDF oficial](https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/inspecao-do-trabalho/seguranca-e-saude-no-trabalho/sst-portarias/2012/portaria_313_aprova_a_nr_35.pdf)
+    - AEAT — Anuário Estatístico de Acidentes do Trabalho (vários anos), MPS.
+      [Página-índice com as tabelas](https://www.gov.br/previdencia/pt-br/assuntos/previdencia-social/saude-e-seguranca-do-trabalhador/acidente_trabalho_incapacidade)
 """)
 )
 
