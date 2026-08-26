@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-26
+
+The v0.4 milestone: simulation-based power analysis and MDE for a given
+treated set (`augsynth_py.power`), plus the inference-layer extensions it
+builds on. Existing estimator results are unchanged; the numerical parity
+suite against R is unaffected.
+
 ### Added
 
 - `conformal_test` / `ConformalTestResult` — the transparent counterpart of
@@ -144,6 +151,7 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.
 
-[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.0
