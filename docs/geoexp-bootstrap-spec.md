@@ -103,17 +103,20 @@ work item after bootstrap and follows augsynth-py's design-doc habit:
 from geoexp import rank_designs, DesignRanking
 
 res = rank_designs(
-    panel,                          # same long-format contract as augsynth-py
-    unit=..., time=..., outcome=...,
-    candidates=[{"NY"}, {"NY", "SF"}, ...],   # explicit treated sets (0.1.0)
+    panel,  # same long-format contract as augsynth-py
+    unit=...,
+    time=...,
+    outcome=...,
+    candidates=[{"NY"}, {"NY", "SF"}, ...],  # explicit treated sets (0.1.0)
     durations=[15, 30],
     estimator=AugSynth(lambda_=...),  # prototype, deep-copied per fit
-    effect_sizes=..., alpha=0.1,      # forwarded to simulate_power
+    effect_sizes=...,
+    alpha=0.1,  # forwarded to simulate_power
     rng=np.random.default_rng(7),
-    n_jobs=-1,                        # candidate-level parallelism
+    n_jobs=-1,  # candidate-level parallelism
 )
-res.ranking          # pl.DataFrame: candidate, duration, mde, size, rank, ...
-res.power(candidate, duration)   # -> augsynth_py.PowerResults for one cell
+res.ranking  # pl.DataFrame: candidate, duration, mde, size, rank, ...
+res.power(candidate, duration)  # -> augsynth_py.PowerResults for one cell
 ```
 
 Contract-usage rules (from the power review, binding on `geoexp` code):
