@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/power-api-contract-review.md` — pre-freeze review of the
+  `augsynth_py.power` public surface before it is frozen as the
+  cross-package contract for the `geoexp` sibling. Four findings (protocol
+  export and naming, run metadata on `PowerResults`, the multi-candidate
+  reproducibility/parallelism patterns, strict `rng` for random schemes);
+  documentation only — no API changed, the findings await maintainer
+  sign-off.
+- `docs/geoexp-bootstrap-spec.md` — bootstrap specification for the
+  `geoexp` repository (project milestone v0.5, market selection): identity,
+  first-release scope, repository skeleton, dependency and CI decisions,
+  and the one-time PyPI trusted-publishing checklist. Moves to the new
+  repo once it exists.
+
 ## [0.4.0] - 2026-08-26
 
 The v0.4 milestone: simulation-based power analysis and MDE for a given
