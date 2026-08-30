@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
 The accepted bundle of `docs/power-api-contract-review.md`, freezing the
 `augsynth_py.power` public surface as the cross-package contract before the
 `geoexp` sibling starts depending on it. Two deliberate breaking changes
@@ -204,7 +206,8 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.
 
-[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.0
