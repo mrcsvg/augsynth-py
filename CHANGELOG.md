@@ -8,20 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The accepted bundle of `docs/power-api-contract-review.md`, freezing the
+`augsynth_py.power` public surface as the cross-package contract before the
+`geoexp` sibling starts depending on it. Two deliberate breaking changes
+(the estimator-hook rename and the strict `rng`), taken now while no
+external code exists — hence a minor bump under the 0.x policy.
+
 ### Added
 
+- `PowerEstimator`, `EffectType` and `DEFAULT_EFFECT_SIZES` are exported
+  from `augsynth_py` (review R-1): downstream code — `geoexp` first — can
+  type its own `estimator:` parameters and reference the documented default
+  effect grid without reaching into `augsynth_py.power` internals.
+- `PowerResults.params` / `PowerParams` (review R-2): every
+  `simulate_power` result now carries a frozen record of the design that
+  produced it (`treated`, `durations`, `effect_sizes`, `lookback_window`,
+  permutation scheme, `side`, `ns`, and the estimator's `repr`), so
+  per-candidate results are self-describing when market selection
+  concatenates them. `alpha` and `effect_type` stay where they were, on
+  `PowerResults` itself. The field defaults to None for direct
+  construction, so rebuilding a `PowerResults` from a filtered
+  `simulations` frame keeps working unchanged.
+- `simulate_power`'s Notes now document the multi-run reproducibility
+  pattern (`rng.spawn(n)` — one child generator per candidate, order
+  independent) and the nested-parallelism split (parallelize across calls
+  with `n_jobs=1` inside, since joblib does not nest workers)
+  (review R-3).
 - `docs/power-api-contract-review.md` — pre-freeze review of the
   `augsynth_py.power` public surface before it is frozen as the
-  cross-package contract for the `geoexp` sibling. Four findings (protocol
-  export and naming, run metadata on `PowerResults`, the multi-candidate
-  reproducibility/parallelism patterns, strict `rng` for random schemes);
-  documentation only — no API changed, the findings await maintainer
-  sign-off.
+  cross-package contract for the `geoexp` sibling. Its recommended bundle
+  (R-1 through R-4) was accepted and is what this release implements.
 - `docs/geoexp-bootstrap-spec.md` — bootstrap specification for the
   `geoexp` repository (project milestone v0.5, market selection): identity,
   first-release scope, repository skeleton, dependency and CI decisions,
   and the one-time PyPI trusted-publishing checklist. Moves to the new
   repo once it exists.
+
+### Changed
+
+- **Breaking**: the conformal estimator hook is now public —
+  `_conformal_null_residuals(h0)` is renamed `conformal_null_residuals(h0)`
+  on `Synth`, `AugSynth`, and the `_FittedSC` / `PowerEstimator` protocols
+  (review R-1). It was already the documented extension point of the
+  inference module; the underscore contradicted that role, and any object
+  implementing the conformal-inference contract had to implement a
+  private-named method. Third-party estimators implementing the old name
+  must rename the method; behaviour is unchanged.
+- **Breaking**: `simulate_power` now raises `ValueError` when a random
+  permutation scheme (`permutation_type="iid"`, or `"block"` with a
+  `block_size`) is requested without `rng`, matching `conformal_pvalue`'s
+  existing stance (review R-4). Previously it silently substituted an
+  unseeded generator, making the one output that feeds go/no-go decisions
+  irreproducible. The deterministic default scheme still needs no `rng`.
 
 ## [0.4.0] - 2026-08-26
 

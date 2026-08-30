@@ -2,7 +2,7 @@
 
 These exercise the CWZ 2021 conformal p-value over already-fitted ``Synth`` and
 ``AugSynth`` estimators. The p-value uses the full-window refit-under-null: the
-estimator's ``_conformal_null_residuals(h0)`` adjusts the treated post-period by
+estimator's ``conformal_null_residuals(h0)`` adjusts the treated post-period by
 ``h0`` and refits the synthetic control over the entire window, and the
 resulting exchangeable residuals are handed to the permutation core.
 """

@@ -200,7 +200,7 @@ class Synth:
         self.treatment_time_: Any = treatment_time
 
         # Private scaffolding for the CWZ 2021 conformal refit-under-null
-        # (see _conformal_null_residuals). Stored on the raw outcome scale so
+        # (see conformal_null_residuals). Stored on the raw outcome scale so
         # the refit can re-derive its own fixed-effect offsets after adjusting
         # the treated post-period by h0. Not part of the public API.
         self._y_matrix: NDArray[np.float64] = y_matrix
@@ -209,7 +209,7 @@ class Synth:
 
         return self
 
-    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+    def conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
         r"""Full-window residuals under the constant-effect null (CWZ 2021).
 
         Implements the residual construction of Chernozhukov, Wüthrich & Zhu

@@ -247,7 +247,7 @@ def test_low_power_interval_expands_past_initial_grid_and_warns():
 class _StubFit:
     # Minimal _FittedSC surface for exercising the interval-extraction layer
     # with a controlled p(h0) curve. gap_/pre_mask_/att_ place the grid;
-    # _conformal_null_residuals is never reached because conformal_pvalue is
+    # conformal_null_residuals is never reached because conformal_pvalue is
     # monkeypatched in the tests below.
     def __init__(self, T=30, t0=20):  # noqa: N803
         gap = np.zeros(T)
@@ -256,7 +256,7 @@ class _StubFit:
         self.pre_mask_ = np.arange(T) < t0
         self.att_ = float(gap[t0:].mean())
 
-    def _conformal_null_residuals(self, h0):
+    def conformal_null_residuals(self, h0):
         raise AssertionError("must not be called when conformal_pvalue is stubbed")
 
 

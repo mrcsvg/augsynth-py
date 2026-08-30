@@ -494,3 +494,63 @@ def test_validation_errors(panel: pl.DataFrame) -> None:
         simulate_power(panel, **common, durations=3, permutation_type="iid", block_size=2)
     with pytest.raises(ValueError, match="block_size must be >= 1"):
         simulate_power(panel, **common, durations=3, block_size=0)
+    # Random schemes refuse to run without a caller-supplied generator,
+    # matching conformal_pvalue's stance (contract review R-4).
+    with pytest.raises(ValueError, match="requires a non-None rng"):
+        simulate_power(panel, **common, durations=3, permutation_type="iid")
+    with pytest.raises(ValueError, match="requires a non-None rng"):
+        simulate_power(panel, **common, durations=3, block_size=2)
+
+
+# ---------------------------------------------------------------------------
+# Public contract: exports, protocol method, and run metadata (review R-1/R-2)
+# ---------------------------------------------------------------------------
+
+
+def test_power_contract_names_are_package_exports() -> None:
+    import augsynth_py
+
+    for name in ("PowerEstimator", "PowerParams", "EffectType", "DEFAULT_EFFECT_SIZES"):
+        assert name in augsynth_py.__all__
+        assert getattr(augsynth_py, name) is not None
+    assert augsynth_py.DEFAULT_EFFECT_SIZES == (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
+
+
+def test_conformal_null_residuals_hook_is_public() -> None:
+    # The estimator hook required by PowerEstimator (and conformal_pvalue) is
+    # a public name; the pre-0.5 private spelling is gone.
+    for cls in (Synth, AugSynth):
+        assert hasattr(cls, "conformal_null_residuals")
+        assert not hasattr(cls, "_conformal_null_residuals")
+
+
+def test_params_recorded_on_results(panel: pl.DataFrame) -> None:
+    res = simulate_power(
+        panel,
+        estimator=Synth(),
+        unit="city",
+        time="t",
+        outcome="y",
+        treated={"u0", "u1"},
+        durations=3,
+        effect_sizes=[0.0, 0.2],
+        lookback_window=2,
+        ns=500,
+    )
+    p = res.params
+    assert p is not None
+    assert set(p.treated) == {"u0", "u1"}
+    assert p.durations == (3,)
+    assert p.effect_sizes == (0.0, 0.2)
+    assert p.lookback_window == 2
+    assert p.permutation_type == "block"
+    assert p.block_size is None
+    assert p.side == "two-sided"
+    assert p.ns == 500
+    assert "Synth" in p.estimator
+    # Direct construction (e.g. rebuilding from a filtered frame) needs no
+    # params; the field defaults to None.
+    rebuilt = PowerResults(
+        simulations=res.simulations, alpha=res.alpha, effect_type=res.effect_type
+    )
+    assert rebuilt.params is None

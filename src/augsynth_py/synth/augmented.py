@@ -708,7 +708,7 @@ class AugSynth:
         self.treatment_time_: Any = treatment_time
 
         # Private scaffolding for the CWZ 2021 conformal refit-under-null
-        # (see _conformal_null_residuals). Raw outcome scale; the effective
+        # (see conformal_null_residuals). Raw outcome scale; the effective
         # penalty ``lambda_`` is already stored as ``self.lambda_``. Not part
         # of the public API.
         self._y_matrix: NDArray[np.float64] = y_matrix
@@ -717,10 +717,10 @@ class AugSynth:
 
         return self
 
-    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+    def conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
         r"""Full-window residuals under the constant-effect null (CWZ 2021).
 
-        The augmented analogue of :meth:`Synth._conformal_null_residuals`. To
+        The augmented analogue of :meth:`Synth.conformal_null_residuals`. To
         test :math:`H_0` that the post-treatment effect is a constant ``h0``,
         subtract ``h0`` from the treated unit's post-period outcomes and
         **refit the augmented synthetic control over the entire window** (all

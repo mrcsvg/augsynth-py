@@ -321,7 +321,7 @@ Robust Conformal Inference Method for Counterfactual and Synthetic Controls.
 — public functions `conformal_pvalue`, `conformal_test`, `conformal_interval`
 and `adjust_pvalues`, built on the private permutation core
 (`_post_statistic`, `_permutation_distribution`, `_pvalue_from_distribution`,
-`_permutation_pvalue`) and the estimator hook `_conformal_null_residuals` on
+`_permutation_pvalue`) and the estimator hook `conformal_null_residuals` on
 both `Synth` (§1) and `AugSynth` (§2). None of these is a new estimator: they
 operate on an already-fitted `Synth` or `AugSynth` (or, for `adjust_pvalues`,
 on plain p-values).
@@ -363,7 +363,7 @@ and the synthetic control is **refit over the entire window** — all $T$
 periods, not the pre-period only (for `fixedeff` the demeaning is likewise taken
 over the full $h_0$-adjusted window). The residual handed to the permutation
 core is the full-length $T$-vector $\hat u_t = \tilde y_{1,t} - \hat y_{1,t}(0)$
-from that refit. This is the `_conformal_null_residuals(h0)` hook on each
+from that refit. This is the `conformal_null_residuals(h0)` hook on each
 estimator.
 
 The full-window refit is the load-bearing step: only a control fit on the
