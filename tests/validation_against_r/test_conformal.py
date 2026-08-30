@@ -28,7 +28,7 @@ Convention pinned (decision log)
   recomputed on the fixed post positions, ``p = #{S_shift >= S_obs} / T``.
 - Residual under ``H_0`` = full-window refit with fixed effects demeaned over
   the **entire** (h0-adjusted) window and simplex/ridge matching over all ``T``
-  periods (verified: our ``_conformal_null_residuals(0)`` reproduces R's
+  periods (verified: our ``conformal_null_residuals(0)`` reproduces R's
   ``compute_permute_test_stats`` residual vector to solver tolerance, ~1e-4).
 
 Aggregate CI note
@@ -221,7 +221,7 @@ def test_block_pvalue_nonzero_h0_matches_r_exact(
 
     R's ``compute_permute_pval(..., h0, ...)`` subtracts ``h0`` from the treated
     post-columns and refits over the full window before permuting — the same
-    construction as our ``_conformal_null_residuals(h0)``. Exercising several
+    construction as our ``conformal_null_residuals(h0)``. Exercising several
     ``h0`` validates the whole p(h0) curve, and hence the acceptance region that
     ``conformal_interval`` inverts (for which R exposes no aggregate oracle).
     """

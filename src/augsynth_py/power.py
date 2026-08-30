@@ -116,7 +116,9 @@ class PowerEstimator(Protocol):
         """Fit on a long-format panel; see :meth:`Synth.fit`."""
         ...
 
-    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]: ...
+    def conformal_null_residuals(self, h0: float) -> NDArray[np.float64]:
+        """Full-window residuals under the constant-effect null ``h0``; see :meth:`Synth.conformal_null_residuals`."""
+        ...
 
 
 class _Window(NamedTuple):
@@ -137,6 +139,55 @@ class _Task(NamedTuple):
     effect: float
     window: _Window
     seed: int | None  # per-task rng seed; None under the deterministic scheme
+
+
+@dataclass(frozen=True)
+class PowerParams:
+    """Design parameters of a :func:`simulate_power` run.
+
+    A frozen record of the call's design arguments, attached to
+    :class:`PowerResults` so a result object is self-describing — market
+    selection (the ``geoexp`` sibling) runs one simulation per candidate
+    treated set and needs to label each result without external bookkeeping.
+
+    ``alpha`` and ``effect_type`` are *not* duplicated here; they live
+    directly on :class:`PowerResults`, where they always did.
+
+    Attributes
+    ----------
+    treated : tuple
+        The treated unit values the effect was injected into. The scalar-vs-
+        group distinction of the ``treated`` argument is not preserved (a
+        group of one and a scalar produce identical simulations).
+    durations : tuple of int
+        The requested treatment lengths.
+    effect_sizes : tuple of float
+        The injected effect grid.
+    lookback_window : int
+        Number of placebo windows per (duration, effect) cell.
+    permutation_type : str
+        Conformal permutation scheme (``"block"`` or ``"iid"``).
+    block_size : int or None
+        Block length for the random block-shuffle scheme; None for the
+        deterministic cyclic-shift scheme.
+    side : str
+        Test direction.
+    ns : int
+        Permutation count for the random schemes.
+    estimator : str
+        ``repr()`` of the unfitted estimator prototype — a label for
+        reporting, not a reconstruction recipe.
+    """
+
+    treated: tuple[Any, ...]
+    durations: tuple[int, ...]
+    effect_sizes: tuple[float, ...]
+    lookback_window: int
+    permutation_type: str
+    block_size: int | None
+    side: str
+    ns: int
+    estimator: str
 
 
 @dataclass(frozen=True)
@@ -167,11 +218,17 @@ class PowerResults:
         ``"multiplicative"`` or ``"additive"`` — how ``effect_size`` was
         injected, hence how the MDE must be read (fractional lift vs raw
         outcome units).
+    params : PowerParams or None
+        The design parameters of the run (treated set, durations, effect
+        grid, permutation scheme, ...), populated by :func:`simulate_power`.
+        None only when a caller constructs :class:`PowerResults` directly
+        (e.g. rebuilding from a filtered ``simulations`` frame).
     """
 
     simulations: pl.DataFrame
     alpha: float
     effect_type: str
+    params: PowerParams | None = None
 
     def power_curve(self, *, alpha: float | None = None) -> pl.DataFrame:
         """Aggregate detection rates by (duration, effect size).
@@ -358,11 +415,15 @@ def simulate_power(
         ``"block"`` with a ``block_size``); ignored by the deterministic
         cyclic-shift scheme.
     rng : numpy.random.Generator, optional
-        Source of per-simulation seeds for the random schemes. Each
+        Source of per-simulation seeds for the random schemes, **required**
+        whenever one is active (``permutation_type="iid"``, or ``"block"``
+        with a ``block_size``) — matching :func:`conformal_pvalue`, which
+        refuses to randomize without a caller-supplied generator, so that
+        power and MDE numbers are reproducible by construction. Each
         simulation draws p-values from an independent generator seeded up
         front in task order, so results are reproducible for a given ``rng``
         regardless of ``n_jobs``. Ignored by the deterministic cyclic-shift
-        scheme; a fresh unseeded generator is used when omitted.
+        scheme (the default), which needs no randomness.
     n_jobs : int, optional
         Parallel workers for the simulation grid, forwarded to
         :class:`joblib.Parallel` (``-1`` uses all cores). Defaults to 1.
@@ -386,7 +447,9 @@ def simulate_power(
         non-positive durations or duplicates, ``lookback_window < 1``,
         ``alpha`` outside ``(0, 1)``, an unknown ``effect_type`` or
         ``on_error``, a ``block_size`` below 1 or combined with
-        ``permutation_type="iid"``, or a panel too short for the requested grid
+        ``permutation_type="iid"``, a random permutation scheme
+        (``"iid"``, or ``"block"`` with a ``block_size``) requested without
+        ``rng``, or a panel too short for the requested grid
         (``T >= max(durations) + lookback_window`` is required so every
         window keeps at least one pre-period).
 
@@ -397,6 +460,21 @@ def simulate_power(
     (GeoLift refits ``augsynth`` per simulation), at roughly one CV per fit.
     Freeze the penalty across simulations with ``AugSynth(lambda_=...)`` when
     that cost matters and the design justifies it.
+
+    **Reproducibility across several runs.** One call is reproducible for a
+    given ``rng`` regardless of ``n_jobs`` (seeds are drawn up front in task
+    order). A *sequence* of calls sharing one generator is reproducible only
+    if the calls happen in a fixed order — which caller-level parallelism
+    (e.g. market selection running one call per candidate treated set)
+    destroys. Spawn one child generator per call instead:
+    ``children = rng.spawn(n_candidates)`` — order-independent and
+    restartable.
+
+    **Nested parallelism.** joblib does not nest workers: an inner
+    :class:`joblib.Parallel` inside a worker runs sequentially. When a caller
+    parallelizes across ``simulate_power`` calls (one per candidate), pass
+    ``n_jobs=1`` here and parallelize at the caller level; use ``n_jobs``
+    here only when the calls themselves run sequentially.
 
     **GeoLift argument correspondence** (`GeoLiftPower`): ``locations`` ->
     ``treated``, ``treatment_periods`` -> ``durations``, ``effect_size`` ->
@@ -444,6 +522,12 @@ def simulate_power(
         if block_size < 1:
             raise ValueError(f"block_size must be >= 1, got {block_size}.")
 
+    # Random schemes require a caller-supplied generator, matching
+    # conformal_pvalue: power/MDE numbers must be reproducible by construction.
+    if (permutation_type == "iid" or block_size is not None) and rng is None:
+        scheme = "'iid'" if permutation_type == "iid" else "'block' with a block_size"
+        raise ValueError(f"permutation_type={scheme} requires a non-None rng.")
+
     if lookback_window < 1:
         raise ValueError(f"lookback_window must be >= 1, got {lookback_window}.")
     if not 0.0 < alpha < 1.0:
@@ -479,8 +563,8 @@ def simulate_power(
     # Random permutation schemes ("iid", or "block" with a block_size) need a
     # per-task generator; the deterministic cyclic-shift scheme does not.
     if permutation_type == "iid" or block_size is not None:
-        master = rng if rng is not None else np.random.default_rng()
-        seeds = master.integers(0, 2**63 - 1, size=len(tasks))
+        assert rng is not None  # validated above for the random schemes
+        seeds = rng.integers(0, 2**63 - 1, size=len(tasks))
         tasks = [task._replace(seed=int(s)) for task, s in zip(tasks, seeds, strict=True)]
 
     logger.info(
@@ -550,7 +634,20 @@ def simulate_power(
             "error": pl.String,
         },
     )
-    return PowerResults(simulations=simulations, alpha=alpha, effect_type=effect_type)
+    params = PowerParams(
+        treated=tuple(treated_list),
+        durations=tuple(duration_list),
+        effect_sizes=tuple(effect_list),
+        lookback_window=lookback_window,
+        permutation_type=permutation_type,
+        block_size=block_size,
+        side=side,
+        ns=ns,
+        estimator=repr(estimator),
+    )
+    return PowerResults(
+        simulations=simulations, alpha=alpha, effect_type=effect_type, params=params
+    )
 
 
 def _is_group(treated: Any) -> bool:

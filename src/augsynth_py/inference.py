@@ -12,7 +12,7 @@ p-value plus the full permutation distribution of the test statistic), and
 schemes: deterministic moving-block cyclic shifts, random contiguous-block
 shuffles of a caller-chosen ``block_size``, and iid random permutations) and
 the estimator's full-window refit-under-null hook
-(``_conformal_null_residuals``), which supplies the exchangeable residuals the
+(``conformal_null_residuals``), which supplies the exchangeable residuals the
 permutation test operates on. :func:`adjust_pvalues` provides standard
 multiple-testing adjustments for collections of conformal p-values.
 
@@ -60,7 +60,7 @@ class _FittedSC(Protocol):
 
     Methods
     -------
-    _conformal_null_residuals(h0)
+    conformal_null_residuals(h0)
         Full-window residuals under the constant-effect null ``h0`` (CWZ 2021),
         obtained by refitting the synthetic control over the entire window with
         the treated post-period adjusted by ``h0``. See the estimator method
@@ -71,7 +71,7 @@ class _FittedSC(Protocol):
     pre_mask_: NDArray[np.bool_]
     att_: float
 
-    def _conformal_null_residuals(self, h0: float) -> NDArray[np.float64]: ...
+    def conformal_null_residuals(self, h0: float) -> NDArray[np.float64]: ...
 
 
 def _post_statistic(
@@ -306,7 +306,7 @@ class ConformalTestResult:
         member.
     residuals : NDArray[np.float64]
         The full-window refit-under-null residual vector the permutations were
-        applied to (``_conformal_null_residuals(h0)``).
+        applied to (``conformal_null_residuals(h0)``).
     post_mask : NDArray[np.bool_]
         Boolean mask over ``residuals`` selecting the post-treatment
         positions the statistic is read on.
@@ -365,7 +365,7 @@ def conformal_test(
     ----------
     fit : _FittedSC
         A fitted estimator exposing ``pre_mask_``, ``att_`` and the
-        ``_conformal_null_residuals`` method (any
+        ``conformal_null_residuals`` method (any
         :class:`~augsynth_py.synth.classical.Synth` or
         :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
     h0 : float, optional
@@ -398,7 +398,7 @@ def conformal_test(
     Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
     116(536), 1849-1864.
     """
-    residuals = np.asarray(fit._conformal_null_residuals(h0), dtype=np.float64)
+    residuals = np.asarray(fit.conformal_null_residuals(h0), dtype=np.float64)
     post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
     statistic, null_distribution, observed_included = _permutation_distribution(
         residuals, post_mask, side, permutation_type, block_size, ns, rng
@@ -439,7 +439,7 @@ def conformal_pvalue(
     under :math:`H_0`. To obtain them, the treated unit's post-period outcomes
     are adjusted by ``h0`` and the synthetic control is **refit over the entire
     window** (all ``T`` periods), not the pre-period only. This is delegated to
-    the estimator's ``_conformal_null_residuals(h0)`` method (implemented on both
+    the estimator's ``conformal_null_residuals(h0)`` method (implemented on both
     :class:`~augsynth_py.synth.classical.Synth` and
     :class:`~augsynth_py.synth.augmented.AugSynth`); the resulting length-``T``
     residual vector is handed to the permutation core
@@ -457,7 +457,7 @@ def conformal_pvalue(
     ----------
     fit : _FittedSC
         A fitted estimator exposing ``pre_mask_``, ``att_`` and the
-        ``_conformal_null_residuals`` method (any
+        ``conformal_null_residuals`` method (any
         :class:`~augsynth_py.synth.classical.Synth` or
         :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``).
     h0 : float, optional
@@ -517,7 +517,7 @@ def conformal_pvalue(
     Conformal Inference Method for Counterfactual and Synthetic Controls. JASA,
     116(536), 1849-1864.
     """
-    residuals = np.asarray(fit._conformal_null_residuals(h0), dtype=np.float64)
+    residuals = np.asarray(fit.conformal_null_residuals(h0), dtype=np.float64)
     post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
     return _permutation_pvalue(
         residuals, post_mask, side, permutation_type, ns, rng, block_size=block_size
@@ -570,7 +570,7 @@ def conformal_interval(
     ----------
     fit : _FittedSC
         A fitted estimator exposing ``gap_``, ``pre_mask_``, ``att_`` and the
-        ``_conformal_null_residuals`` method (any
+        ``conformal_null_residuals`` method (any
         :class:`~augsynth_py.synth.classical.Synth` or
         :class:`~augsynth_py.synth.augmented.AugSynth` after ``.fit``). ``gap_``
         and ``att_`` place the grid; each grid point is scored by refitting via

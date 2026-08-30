@@ -1,5 +1,10 @@
 # `augsynth_py.power` — pre-freeze API contract review
 
+> **Status — accepted 2026-08-30**: the maintainer accepted the
+> *recommended* bundle (all of R-1 through R-4, including the two breaking
+> items). It ships as augsynth-py **0.5.0**; `geoexp`'s dependency floor is
+> that release.
+
 **Date**: 2026-08-28. **Version reviewed**: 0.4.0 (the shape published to PyPI).
 **Reviewer context**: `CLAUDE.md` requires that "the public shape of
 `augsynth_py.power` should be learned before it is frozen as a cross-package
