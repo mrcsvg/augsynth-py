@@ -57,6 +57,9 @@ CELLS.append(
     md("""
     # NR-35 (trabalho em altura) e a mortalidade na construção civil
 
+    [![Abrir no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrcsvg/augsynth-py/blob/main/notebooks/04_nr35_trabalho_em_altura.ipynb)
+    *(no Colab, a primeira célula clona o repositório e instala o pacote — ~1 min)*
+
     > **Desenho.** Controle sintético (clássico e aumentado por ridge) sobre o painel
     > anual de mortalidade por acidente de trabalho do AEAT, com a **construção** como
     > unidade tratada e as **demais divisões CNAE** como pool de doadores.
@@ -102,15 +105,34 @@ CELLS.append(
     import warnings
     from pathlib import Path
 
-    # Torna `augsynth_py` importável rodando o notebook de qualquer cwd.
-    _here = Path.cwd()
-    for cand in (_here, _here.parent, _here.parent.parent):
-        if (cand / "src" / "augsynth_py").exists():
-            sys.path.insert(0, str(cand / "src"))
-            DATA_DIR = (cand / "notebooks" / "_data") if (cand / "notebooks").exists() else (_here / "_data")
-            break
+    # Ambiente: Google Colab (clona o repo — pacote + dados) ou checkout local.
+    try:
+        import google.colab  # type: ignore  # noqa: F401
+        IN_COLAB = True
+    except ImportError:
+        IN_COLAB = False
+
+    if IN_COLAB:
+        import subprocess
+        _repo = Path("augsynth-py")
+        if not _repo.exists():
+            subprocess.run(
+                ["git", "clone", "--depth", "1",
+                 "https://github.com/mrcsvg/augsynth-py.git", str(_repo)],
+                check=True,
+            )
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", str(_repo)], check=True)
+        DATA_DIR = _repo / "notebooks" / "_data"
     else:
-        DATA_DIR = _here / "_data"
+        # Torna `augsynth_py` importável rodando o notebook de qualquer cwd.
+        _here = Path.cwd()
+        for cand in (_here, _here.parent, _here.parent.parent):
+            if (cand / "src" / "augsynth_py").exists():
+                sys.path.insert(0, str(cand / "src"))
+                DATA_DIR = (cand / "notebooks" / "_data") if (cand / "notebooks").exists() else (_here / "_data")
+                break
+        else:
+            DATA_DIR = _here / "_data"
 
     import numpy as np
     import polars as pl
