@@ -1,0 +1,401 @@
+"""Generate GeoLift-compatible candidate treatment groups."""
+
+import copy
+from collections.abc import Iterable, Sequence
+from dataclasses import InitVar, dataclass, field
+from numbers import Integral
+from typing import Any, cast
+
+import numpy as np
+import pandas as pd
+from pandas.api.types import is_numeric_dtype
+
+
+@dataclass(frozen=True, eq=False)
+class MarketSelectionResults:
+    """Candidate assignments produced by market selection."""
+
+    _candidates: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_candidates", self._candidates.copy(deep=True))
+
+    def as_df(self) -> pd.DataFrame:
+        """Return the candidate table as a defensive copy."""
+        return self._candidates.copy(deep=True)
+
+    def as_samples(self) -> dict[str, dict[str, list[object]]]:
+        """Return assignments with treatment in ``pod_A`` and donors in ``pod_B``."""
+        rows = self._candidates[["treatment_markets", "donor_markets"]].itertuples(
+            index=False,
+            name=None,
+        )
+        return {
+            f"sample{sample_number}": {
+                "pod_A": list(treatment_markets),
+                "pod_B": list(donor_markets),
+            }
+            for sample_number, (treatment_markets, donor_markets) in enumerate(rows, start=1)
+        }
+
+
+@dataclass(frozen=True)
+class MarketSelector:
+    """Configure and generate candidate treatment groups.
+
+    The selector stores one market-selection policy and can apply it to equivalent
+    canonical panels. It does not retain input data or results between calls.
+
+    Parameters
+    ----------
+    market_counts
+        Numbers of markets to include in each candidate treatment group.
+    location_col
+        Panel column identifying markets.
+    time_col
+        Panel column identifying time periods.
+    outcome_col
+        Numeric outcome used to compare market histories.
+    include_markets
+        Markets that every retained candidate must contain.
+    exclude_markets
+        Markets that cannot receive treatment but remain available as donors.
+    run_stochastic_process
+        Whether to sample one market from each adjacent pair of similarity ranks
+        instead of taking the top ``market_count`` markets.
+    rng
+        Random generator for stochastic selection. Required when
+        ``run_stochastic_process=True``. The selector snapshots its state, so
+        repeated calls return the same candidates.
+    """
+
+    market_counts: Sequence[int]
+    location_col: str = "location"
+    time_col: str = "time"
+    outcome_col: str = "Y"
+    include_markets: Iterable[object] = ()
+    exclude_markets: Iterable[object] = ()
+    run_stochastic_process: bool = False
+    rng: InitVar[np.random.Generator | None] = None
+    _rng: np.random.Generator | None = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self, rng: np.random.Generator | None) -> None:
+        """Normalize and validate configuration that does not depend on panel data."""
+        counts = _validate_market_counts(self.market_counts)
+        included = _normalize_market_list(self.include_markets, name="include_markets")
+        excluded = _normalize_market_list(self.exclude_markets, name="exclude_markets")
+        _validate_column_names(self.location_col, self.time_col, self.outcome_col)
+        if not isinstance(self.run_stochastic_process, bool):
+            raise ValueError("run_stochastic_process must be a boolean")
+        if rng is not None and not isinstance(rng, np.random.Generator):
+            raise TypeError("rng must be a numpy.random.Generator")
+        if self.run_stochastic_process and rng is None:
+            raise ValueError("Stochastic market selection requires rng")
+
+        overlap = set(included) & set(excluded)
+        if overlap:
+            raise ValueError(f"include_markets and exclude_markets overlap: {sorted(overlap)}")
+
+        object.__setattr__(self, "market_counts", counts)
+        object.__setattr__(self, "include_markets", included)
+        object.__setattr__(self, "exclude_markets", excluded)
+        object.__setattr__(self, "_rng", copy.deepcopy(rng))
+
+    def select(self, data: pd.DataFrame) -> MarketSelectionResults:
+        """Return candidate treatment groups and their corresponding donor pools.
+
+        ``data`` must be a complete long panel with one row per market and time.
+        """
+        candidates = _select_markets(
+            data,
+            market_counts=self.market_counts,
+            location_col=self.location_col,
+            time_col=self.time_col,
+            outcome_col=self.outcome_col,
+            include_markets=cast(tuple[str, ...], self.include_markets),
+            exclude_markets=cast(tuple[str, ...], self.exclude_markets),
+            run_stochastic_process=self.run_stochastic_process,
+            rng=copy.deepcopy(self._rng),
+        )
+        return MarketSelectionResults(candidates)
+
+
+def _select_markets(
+    data: pd.DataFrame,
+    *,
+    market_counts: Sequence[int],
+    location_col: str,
+    time_col: str,
+    outcome_col: str,
+    include_markets: Sequence[str],
+    exclude_markets: Sequence[str],
+    run_stochastic_process: bool,
+    rng: np.random.Generator | None,
+) -> pd.DataFrame:
+    panel = _normalize_locations(data, location_col=location_col)
+    original_markets = data[location_col].drop_duplicates().tolist()
+    normalized_markets = panel[location_col].drop_duplicates().tolist()
+    original_identifier = dict(zip(normalized_markets, original_markets, strict=True))
+    panel = _validate_panel(
+        panel,
+        location_col=location_col,
+        time_col=time_col,
+        outcome_col=outcome_col,
+    )
+    all_markets = panel[location_col].drop_duplicates().tolist()
+
+    _validate_known_markets(include_markets, all_markets, name="include_markets")
+    _validate_known_markets(exclude_markets, all_markets, name="exclude_markets")
+
+    eligible_markets = [market for market in all_markets if market not in exclude_markets]
+    market_counts = _limit_stochastic_market_counts(
+        market_counts,
+        eligible_market_count=len(eligible_markets),
+        run_stochastic_process=run_stochastic_process,
+    )
+    _validate_group_sizes(
+        market_counts,
+        included=include_markets,
+        eligible_markets=eligible_markets,
+        all_markets=all_markets,
+    )
+    ranked_markets = _rank_eligible_markets(
+        panel,
+        eligible_markets=eligible_markets,
+        location_col=location_col,
+        time_col=time_col,
+        outcome_col=outcome_col,
+    )
+
+    records: list[dict[str, object]] = []
+    for market_count in market_counts:
+        groups = _candidate_groups(
+            ranked_markets,
+            market_count,
+            run_stochastic_process=run_stochastic_process,
+            rng=rng,
+        )
+        groups = [group for group in groups if set(include_markets).issubset(group)]
+        if not groups:
+            raise ValueError(
+                "No candidate treatment groups satisfy include_markets "
+                f"for market_count={market_count}"
+            )
+
+        records.extend(
+            {
+                "market_count": market_count,
+                "candidate_id": candidate_id,
+                "treatment_markets": tuple(original_identifier[market] for market in group),
+                "donor_markets": tuple(
+                    original_identifier[market] for market in all_markets if market not in group
+                ),
+            }
+            for candidate_id, group in enumerate(groups, start=1)
+        )
+
+    return pd.DataFrame.from_records(
+        records,
+        columns=["market_count", "candidate_id", "treatment_markets", "donor_markets"],
+    )
+
+
+def _market_correlations(
+    data: pd.DataFrame,
+    *,
+    location_col: str,
+    time_col: str,
+    outcome_col: str,
+) -> pd.DataFrame:
+    panel = _validate_panel(
+        data,
+        location_col=location_col,
+        time_col=time_col,
+        outcome_col=outcome_col,
+    )
+    market_order = panel[location_col].drop_duplicates().tolist()
+    outcomes = panel.pivot_table(
+        index=time_col,
+        columns=location_col,
+        values=outcome_col,
+    ).reindex(columns=market_order)
+    constant_markets = outcomes.columns[outcomes.eq(outcomes.iloc[0]).all()].tolist()
+    if constant_markets:
+        raise ValueError(f"Cannot correlate constant markets: {constant_markets}")
+
+    return outcomes.corr().rename_axis(index=location_col, columns=location_col)
+
+
+def _rank_eligible_markets(
+    panel: pd.DataFrame,
+    *,
+    eligible_markets: Sequence[str],
+    location_col: str,
+    time_col: str,
+    outcome_col: str,
+) -> dict[str, list[str]]:
+    if len(eligible_markets) == 1:
+        market = eligible_markets[0]
+        return {market: [market]}
+
+    correlations = _market_correlations(
+        panel.loc[panel[location_col].isin(eligible_markets)],
+        location_col=location_col,
+        time_col=time_col,
+        outcome_col=outcome_col,
+    )
+    return {
+        anchor: [anchor, *_ranked_neighbors(correlations, anchor)] for anchor in eligible_markets
+    }
+
+
+def _ranked_neighbors(correlations: pd.DataFrame, anchor: str) -> list[str]:
+    similarities: pd.Series[Any] = cast(Any, correlations.loc[anchor])
+    similarities = similarities.drop(index=anchor)
+    return cast(
+        list[str],
+        similarities.sort_values(ascending=False, kind="stable").index.tolist(),
+    )
+
+
+def _validate_panel(
+    data: pd.DataFrame,
+    *,
+    location_col: str,
+    time_col: str,
+    outcome_col: str,
+) -> pd.DataFrame:
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("data must be a pandas DataFrame")
+
+    required = [location_col, time_col, outcome_col]
+    missing = [column for column in required if column not in data]
+    if missing:
+        raise ValueError(f"Data is missing required columns: {missing}")
+
+    panel = data.loc[:, required].copy()
+    if panel.isna().any().any():
+        raise ValueError("Market selection requires a complete panel without missing values")
+    if panel.duplicated([location_col, time_col]).any():
+        raise ValueError("Panel contains duplicate market-time observations")
+    if not is_numeric_dtype(panel[outcome_col]):
+        raise ValueError(f"Outcome column '{outcome_col}' must be numeric")
+    if not np.isfinite(panel[outcome_col].to_numpy()).all():
+        raise ValueError(f"Outcome column '{outcome_col}' must contain only finite values")
+
+    market_count = panel[location_col].nunique()
+    time_count = panel[time_col].nunique()
+    if len(panel) != market_count * time_count:
+        raise ValueError("Market selection requires one observation per market and time")
+    if market_count < 2:
+        raise ValueError("Market selection requires at least two markets")
+
+    return panel
+
+
+def _normalize_locations(data: pd.DataFrame, *, location_col: str) -> pd.DataFrame:
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("data must be a pandas DataFrame")
+    if location_col not in data:
+        raise ValueError(f"Data is missing required columns: ['{location_col}']")
+    if data[location_col].isna().any():
+        raise ValueError("Market selection requires market identifiers without missing values")
+
+    locations: pd.Series[Any] = data[location_col].astype(str)
+    panel = data.copy().assign(**{location_col: locations.str.lower()})
+    original_count = data[location_col].nunique()
+    if panel[location_col].nunique() != original_count:
+        raise ValueError("Market identifiers must remain unique after case normalization")
+    return panel
+
+
+def _normalize_market_list(markets: Iterable[object], *, name: str) -> tuple[str, ...]:
+    values = (markets,) if isinstance(markets, str) else markets
+    normalized = tuple(str(market).lower() for market in values)
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{name} contains duplicate markets")
+    return normalized
+
+
+def _limit_stochastic_market_counts(
+    market_counts: Sequence[int],
+    *,
+    eligible_market_count: int,
+    run_stochastic_process: bool,
+) -> tuple[int, ...]:
+    counts = tuple(market_counts)
+    if not run_stochastic_process:
+        return counts
+    if eligible_market_count < 2:
+        raise ValueError(
+            "Stochastic market selection requires at least two treatment-eligible markets"
+        )
+
+    maximum = eligible_market_count // 2
+    limited = tuple(count for count in counts if count <= maximum)
+    return limited or (maximum,)
+
+
+def _validate_column_names(location_col: str, time_col: str, outcome_col: str) -> None:
+    columns = (location_col, time_col, outcome_col)
+    if any(not isinstance(column, str) or not column for column in columns):
+        raise ValueError("Column names must be non-empty strings")
+    if len(set(columns)) != len(columns):
+        raise ValueError("location_col, time_col, and outcome_col must be distinct")
+
+
+def _validate_known_markets(
+    markets: Iterable[str], all_markets: Sequence[str], *, name: str
+) -> None:
+    unknown = sorted(set(markets) - set(all_markets))
+    if unknown:
+        raise ValueError(f"Markets in {name} not found in the data: {unknown}")
+
+
+def _validate_market_counts(market_counts: Sequence[int]) -> tuple[int, ...]:
+    counts = tuple(market_counts)
+    if not counts:
+        raise ValueError("market_counts must contain at least one treatment-group size")
+    invalid = (
+        not isinstance(count, Integral) or isinstance(count, bool) or count <= 0 for count in counts
+    )
+    if any(invalid):
+        raise ValueError("market_counts must contain positive integers")
+    if len(counts) != len(set(counts)):
+        raise ValueError("market_counts must not contain duplicates")
+    return counts
+
+
+def _validate_group_sizes(
+    counts: Sequence[int],
+    *,
+    included: Sequence[str],
+    eligible_markets: Sequence[str],
+    all_markets: Sequence[str],
+) -> None:
+    if any(count < len(included) for count in counts):
+        raise ValueError("market_counts cannot be smaller than the number of included markets")
+    if any(count > len(eligible_markets) for count in counts):
+        raise ValueError("market_counts cannot exceed the number of treatment-eligible markets")
+    if any(count >= len(all_markets) for count in counts):
+        raise ValueError("Each candidate treatment group must leave at least one donor market")
+
+
+def _candidate_groups(
+    ranked_markets: dict[str, list[str]],
+    market_count: int,
+    *,
+    run_stochastic_process: bool = False,
+    rng: np.random.Generator | None = None,
+) -> list[tuple[str, ...]]:
+    if not run_stochastic_process:
+        groups = [tuple(sorted(markets[:market_count])) for markets in ranked_markets.values()]
+    else:
+        if rng is None:  # pragma: no cover
+            raise ValueError("A random generator is required for stochastic selection")
+        selected_positions = [2 * pair + int(rng.integers(0, 2)) for pair in range(market_count)]
+        groups = [
+            tuple(sorted(markets[position] for position in selected_positions))
+            for markets in ranked_markets.values()
+        ]
+    return list(dict.fromkeys(groups))

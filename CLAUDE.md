@@ -57,7 +57,7 @@ relevant paper and equation in docstrings.
 | Language             | Python 3.11+                      | Practical adoption, scientific ecosystem               |
 | Numerics             | `numpy`, `scipy`                  | Native BLAS/LAPACK, stable APIs                        |
 | Convex optimization  | `cvxpy` (OSQP / Clarabel backends)| Cleanest expression of constrained QPs                 |
-| Tabular data         | `polars`                          | Fast, sane API, scales to panel datasets               |
+| Tabular data         | `polars` for estimator panels; `pandas` for geoexp orchestration | Polars keeps the estimator core lean; pandas matches the GeoLift-shaped result API |
 | Parallelism          | `joblib`                          | Power analysis is embarrassingly parallel              |
 | Build backend        | `hatchling`                       | Modern, simple, PEP 621 native                         |
 | Layout               | `src/` layout                     | Avoids accidental imports during testing               |
@@ -92,67 +92,28 @@ Shipped so far: classical `Synth` (v0.1), ridge-augmented `AugSynth` with
 LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3) — each with unit +
 R-parity tests and a clean-room audit in `docs/`.
 
-Critical path toward end-to-end geo-experiments (the project's reason to
-exist), in order:
+Critical path toward end-to-end geo-experiments:
 
-1. **v0.4 — power analysis / MDE** (`augsynth_py.power`): effect injection +
-   refit + detection rate via conformal inference; parallel grid with joblib.
-   Parity oracle: `GeoLiftPower`. **Lands in this package** — see the package
-   boundary below.
-2. **v0.5 — market selection**: candidate ranking over treatment sets ×
-   durations, `GeoLiftMarketSelection` analogue. Completes the single-cell
-   GeoLift flow. **Lands in the sibling package**, not here.
-3. **v0.6+ — multi-cell experiments** (sibling package); then, if demand
-   appears, auxiliary covariates $X_i$ and GSC (Xu 2017, incl. BFR 2021 §4
-   augmentation) here.
+1. **v0.4 — power analysis / MDE** (`augsynth_py.power`): effect injection,
+   refit, and conformal detection for a treated set supplied by the caller.
+2. **v0.5 — geo-experiment helpers** (`augsynth_py.geoexp`): correlation-based
+   market selection and a GeoLift-shaped evaluator for candidate assignments.
+3. **Later — broader design tooling**: budgeting, ROI, multi-cell experiments,
+   and reporting remain separate work until their contracts are clear.
 
-### Package boundary: this package vs. the geo-experiment sibling
+### Package boundary
 
-The line is **"given a design"** vs. **"choose a design"**:
+The core estimator layer answers **what can this design detect?** It uses
+Polars panels and exposes generic synthetic-control estimators, inference, and
+power/MDE for a treated set that the caller already fixed.
 
-- **`augsynth-py`** answers *what can this design detect?* — estimators,
-  inference, and power/MDE for a treated set that the caller already fixed.
-  All of it is generic synthetic control: a policy evaluation using
-  `AugSynth` wants an MDE without installing geo-marketing machinery.
-- **The sibling package** answers *which design should I run, and what will
-  it cost?* — market selection over candidate treated sets, budget / ROI /
-  cost-per-incremental-conversion, multi-cell design, GeoLift-shaped API and
-  reporting. It depends on `augsynth-py` through the public API only.
+The `augsynth_py.geoexp` layer answers **which candidate assignment should be
+evaluated?** It uses the core public API to select candidate treatment groups
+and evaluate them. It accepts pandas panels because its GeoLift-shaped result
+API is table-oriented. It does not depend on measurement-lib.
 
-Why the boundary sits there:
-
-- Market selection calls power once per candidate treated set — a coarse,
-  clean call, not an inner-loop entanglement, so the split does not cut
-  through the middle of an algorithm.
-- Measured, not assumed: driving refits from outside the package (rebuild the
-  panel DataFrame, full `fit`) versus inside it (prep once, then solve) costs
-  1.6x on `Synth` and is in the noise on `AugSynth`. There is no performance
-  argument for pulling the orchestration layer in here.
-- `AugSynth(lambda_=...)` already lets a caller freeze the CV-selected penalty
-  across simulations, so the sibling needs no privileged access to internals.
-
-Consequences for anyone working here:
-
-- Do **not** add market selection, budget/ROI, or multi-cell code to this
-  package. Power analysis for a *given* treated set is the last stop.
-- The sibling repo does not exist yet, and should not be created until v0.5
-  starts: v0.4 fits here, and the public shape of `augsynth_py.power` should
-  be learned before it is frozen as a cross-package contract.
-- The sibling is named **`geoexp`** — settled 2026-08-12, PyPI name free, no
-  colliding project found. It replaces the working name `geolift-py`, which
-  implied association with Meta's GeoLift. No `-py` suffix: the one on
-  `augsynth-py` disambiguates from the R `augsynth`, and there is no `geoexp`
-  elsewhere to disambiguate from.
-- If that name is ever revisited, know that the `geo` + common-word namespace
-  is close to exhausted. Geology, mining, oil and gas, geotechnical and GIS
-  vendors have been shipping named products since the 1980s and hold most
-  evocative pairings: `geoplan` (three companies), `geoscout` (geoLOGIC),
-  `geoslate` (Hexagon), `geodraft` (Geologix), `geoassign` (Thünen Institute),
-  `geostudy` (one letter from Seequent's `GeoStudio`), `geoxp` (the `GeoXp`
-  CRAN package for spatial statistics). Most of those are *free on PyPI* and
-  still unusable — so check the wider software landscape, not just PyPI
-  availability. What survives is experiment-specific vocabulary, which those
-  industries have no reason to claim.
+Keep budgeting, ROI, cost-per-incremental-conversion, multi-cell design, and
+reporting outside this layer until those contracts are defined.
 
 Deferred until further notice (do not start without maintainer sign-off):
 
@@ -183,6 +144,7 @@ augsynth-py/
 │   ├── exceptions.py               <- domain exceptions
 │   ├── inference.py                <- conformal inference (CWZ 2021)
 │   ├── py.typed                    <- PEP 561 marker
+│   ├── geoexp/                     <- market selection and design evaluation
 │   └── synth/                      <- estimator implementations
 ├── tests/
 │   ├── conftest.py                 <- shared fixtures

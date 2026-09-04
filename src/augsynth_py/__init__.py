@@ -1,6 +1,12 @@
 """augsynth-py: Augmented Synthetic Control Methods for Python."""
 
 from augsynth_py._version import __version__
+from augsynth_py.geoexp import (
+    GeoLiftPowerAnalysis,
+    GeoLiftPowerAnalysisResults,
+    MarketSelectionResults,
+    MarketSelector,
+)
 from augsynth_py.inference import (
     ConformalTestResult,
     adjust_pvalues,
@@ -23,6 +29,10 @@ __all__ = [
     "AugSynth",
     "ConformalTestResult",
     "EffectType",
+    "GeoLiftPowerAnalysis",
+    "GeoLiftPowerAnalysisResults",
+    "MarketSelectionResults",
+    "MarketSelector",
     "PowerEstimator",
     "PowerParams",
     "PowerResults",

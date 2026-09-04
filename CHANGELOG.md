@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `augsynth_py.geoexp` with correlation-based market selection and a
+  GeoLift-shaped power-analysis evaluator for candidate assignments. The layer
+  uses the public `augsynth_py.power` API and has no measurement-lib dependency.
+- Python unit coverage plus optional R validation against GeoLift for market
+  selection and per-window power-analysis results. R tests are skipped when
+  `rpy2`, R, or GeoLift is unavailable.
+
+### Changed
+
+- Added pandas as a runtime dependency for the GeoLift-shaped orchestration
+  API, which accepts pandas panels and returns pandas result tables.
+
 ## [0.5.0] - 2026-08-30
 
 The accepted bundle of `docs/power-api-contract-review.md`, freezing the

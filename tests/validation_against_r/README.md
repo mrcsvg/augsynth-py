@@ -4,16 +4,17 @@ Tests in this directory compare the output of `augsynth_py` against the R
 reference implementations (`augsynth`, `gsynth`, `Synth`, `GeoLift`) using
 `rpy2` as a bridge.
 
-These tests are the project's contract with reality. If a Python estimator does
-not match the R output within tolerance on the canonical fixture, that is a
-bug, full stop.
+These tests are the project's contract with reality. If a Python estimator or
+geo-experiment helper does not match the R output within tolerance, that is a
+bug. The GeoLift-backed tests are marked with `requires_r_pkg("GeoLift")` and
+skip when GeoLift is not installed.
 
 ## Why a separate directory
 
 Running these tests requires:
 
 - R >= 4.0
-- The R packages `augsynth`, `Synth`, and (for some tests) `GeoLift`.
+- The R packages `augsynth`, `Synth`, and (for geo-experiment tests) `GeoLift`.
 - The Python optional dependency group `validation` (which installs `rpy2`).
 
 Most contributors will not have all of this set up locally. Keeping the
@@ -35,8 +36,10 @@ Rscript -e 'remotes::install_github("ebenmichael/augsynth")'
 pytest tests/validation_against_r/ -v
 ```
 
-If R or `rpy2` is not available, the tests skip cleanly via
-`pytest.importorskip`. They never fail spuriously due to a missing R install.
+If R or `rpy2` is not available, the suite skips cleanly via
+`pytest.importorskip`. If a specific R package is missing, only the tests
+marked with that package are skipped. They never fail spuriously due to a
+missing R install.
 
 ## Tolerances
 
