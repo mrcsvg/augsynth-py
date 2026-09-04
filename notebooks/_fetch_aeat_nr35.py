@@ -47,6 +47,8 @@ import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import polars as pl
+
 DATA_DIR = Path(__file__).parent / "_data"
 PANEL_CSV = DATA_DIR / "aeat_nr35_panel.csv"
 DEMO_CSV = DATA_DIR / "aeat_nr35_panel_demo.csv"
@@ -199,11 +201,9 @@ def _find_subsecao_b_brasil(zf: zipfile.ZipFile) -> str:
     for n in names:
         if re.search(r"29a?_?0?1\.xlsx?$", n.lower()):
             return n
-    import pandas as pd
-
     for n in names:
         try:
-            head = pd.read_excel(io.BytesIO(zf.read(n)), header=None, nrows=8)
+            head = pl.read_excel(io.BytesIO(zf.read(n)), has_header=False).head(8)
         except Exception:
             continue
         text = " ".join(str(v) for v in head.to_numpy().ravel()).lower()
@@ -227,12 +227,9 @@ def _parse_subsecao_b(xls_bytes: bytes, years: tuple[int, int, int]) -> dict[tup
     columns, years ascending). Returns {(divisao, ano): óbitos} aggregated to
     2-digit divisões, plus ("TOTAL", ano) for validation.
     """
-    import pandas as pd
-
-    df = pd.read_excel(io.BytesIO(xls_bytes), header=None)
+    df = pl.read_excel(io.BytesIO(xls_bytes), has_header=False)
     out: dict[tuple[str, int], int] = {}
-    for _, row in df.iterrows():
-        cells = row.tolist()
+    for cells in df.iter_rows():
         label = str(cells[0]).strip()
         numeric = [c for c in cells[1:] if isinstance(c, (int, float)) and c == c]
         if len(numeric) < 18:

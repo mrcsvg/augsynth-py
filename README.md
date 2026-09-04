@@ -191,9 +191,29 @@ What's available today:
   res.mde()  # smallest lift with power >= 0.8
   ```
 
-Market selection — *choosing* the treated set, budgets, multi-cell designs —
-is the planned sibling package (`geoexp`), which will consume this one
-through its public API.
+### Choosing a market assignment
+
+The optional geo-experiment layer provides correlation-ranked candidate
+assignments and a GeoLift-shaped evaluator built on `simulate_power`:
+
+```python
+from augsynth_py.geoexp import GeoLiftPowerAnalysis, MarketSelector
+
+samples = MarketSelector(market_counts=[1, 2]).select(panel).as_samples()
+results = GeoLiftPowerAnalysis(
+    estimator=AugSynth(lambda_=1.0),
+    durations=15,
+    treatment_pod="pod_A",
+    effect_sizes=[0.0, 0.05, 0.10, 0.15, 0.20, 0.25],
+    permutation_type="block",
+).evaluate(panel, samples)
+
+results.get_best_design()
+```
+
+This layer accepts Polars panels and returns Polars result tables. It does not
+depend on measurement-lib. Budgeting, ROI, and multi-cell design selection
+remain outside this package.
 
 ## Methodological references
 

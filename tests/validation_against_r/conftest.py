@@ -18,28 +18,41 @@ Design notes
 
 from __future__ import annotations
 
+import shutil
 from typing import Any
 
 import numpy as np
 import polars as pl
 import pytest
 
+from tests.validation_against_r._r_frames import from_r_data_frame
+
 # ---------------------------------------------------------------------------
 # Skip-collection if the R toolchain is unavailable
 # ---------------------------------------------------------------------------
 
+# Skip before importing rpy2 when R itself is absent. An installed rpy2 wheel
+# cannot initialize without libR, and that failure is not a missing-module error.
+if shutil.which("R") is None:
+    pytest.skip("R is not installed; skipping R validation.", allow_module_level=True)
+
 # `importorskip` raises Skipped at collection time if rpy2 is missing.
-# That cleanly removes the validation suite for developers without R.
+# That cleanly removes the validation suite for developers without rpy2.
 rpy2 = pytest.importorskip(
     "rpy2",
     reason="rpy2 not installed; install with `pip install -e .[validation]`.",
 )
+try:
+    import rpy2.robjects as ro
+except Exception as exc:
+    pytest.skip(
+        f"rpy2 could not initialize R: {exc}",
+        allow_module_level=True,
+    )
 
 
 def _r_package_available(name: str) -> bool:
     """Return True if the R package ``name`` is installed in the linked R."""
-    import rpy2.robjects as ro
-
     # `requireNamespace` returns its result invisibly; rpy2 drops invisible
     # values and we get NULL. Wrap in `isTRUE()` to force a visible logical.
     return bool(ro.r(f'isTRUE(requireNamespace("{name}", quietly = TRUE))')[0])
@@ -80,8 +93,6 @@ def r_session() -> Any:  # returns the rpy2.robjects.r namespace
     Loading rpy2 spins up an embedded R process. Doing this once per session
     keeps the suite fast.
     """
-    import rpy2.robjects as ro
-
     # Quiet R output during tests; failures still raise.
     ro.r("options(warn = 1)")
     return ro.r
@@ -103,19 +114,9 @@ def r_geolift_pretest(r_session: Any) -> pl.DataFrame:
     if not _r_package_available("GeoLift"):
         pytest.skip("R package 'GeoLift' is not installed.")
 
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects.conversion import localconverter
-
     r_session("suppressPackageStartupMessages(library(GeoLift))")
     r_session("data(GeoLift_PreTest)")
-    r_df = r_session("GeoLift_PreTest")
-
-    # Convert R data.frame -> pandas -> polars. Going through pandas avoids
-    # rpy2 / polars ABI surprises, and the cost is negligible for this dataset.
-    with localconverter(rpy2.robjects.default_converter + pandas2ri.converter):
-        pandas_df = rpy2.robjects.conversion.rpy2py(r_df)
-
-    return pl.from_pandas(pandas_df)
+    return from_r_data_frame(r_session("GeoLift_PreTest"))
 
 
 # ---------------------------------------------------------------------------

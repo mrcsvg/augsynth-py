@@ -84,7 +84,7 @@ pin are mutually compatible, but only at `numba` 0.61.x or below.
 
 ## 4. What is verified
 
-`tests/unit/` (90 tests) passes, and `mypy --strict src/` is clean, on:
+`tests/unit/` passes, and `mypy --strict src/` is clean, on:
 
 - the declared floors — numpy 1.26.0, scipy 1.12.0, cvxpy 1.4.1, polars 1.0.0,
   joblib 1.3.0, Python 3.11;
@@ -97,9 +97,8 @@ The floors are guarded by the `unit-tests-min-deps` job in
 `.github/workflows/ci.yml`. When a floor moves in `pyproject.toml`, move the
 pins in that job with it.
 
-The R parity suite (`tests/validation_against_r/`) is unaffected by this axis:
-it runs in its own workflow with an unconstrained resolution, and `rpy2`,
-`pandas` and `pyarrow` all support numpy 1.x and 2.x alike.
+The R parity suite (`tests/validation_against_r/`) runs in its own workflow
+with an unconstrained resolution. Its only extra Python dependency is `rpy2`.
 
 ## 5. Adding a dependency, later
 

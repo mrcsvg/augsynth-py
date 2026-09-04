@@ -34,7 +34,6 @@ import polars as pl
 def _r() -> Any:
     if not hasattr(_r, "_cached"):
         import rpy2.robjects as ro
-        from rpy2.robjects import pandas2ri
         from rpy2.robjects.packages import importr
 
         _r._cached = type(  # type: ignore[attr-defined]
@@ -42,7 +41,6 @@ def _r() -> Any:
             (),
             dict(
                 ro=ro,
-                pandas2ri=pandas2ri,
                 base=importr("base"),
                 augsynth=importr("augsynth"),
             ),
@@ -265,12 +263,16 @@ def _fit_via_augsynth(
     outcome: str = "sales",
 ) -> FitResult:
     r = _r()
-    pdf = panel.select(time, unit, outcome, "treat").to_pandas()
-
-    with (r.ro.default_converter + r.pandas2ri.converter).context():
-        rdf = r.ro.conversion.get_conversion().py2rpy(pdf)
-
-    r.ro.globalenv["panel_r"] = rdf
+    columns = {}
+    for name, dtype in panel.select(time, unit, outcome, "treat").schema.items():
+        values = panel.get_column(name).to_list()
+        if dtype == pl.String:
+            columns[name] = r.ro.StrVector(values)
+        elif dtype.is_integer():
+            columns[name] = r.ro.IntVector(values)
+        else:
+            columns[name] = r.ro.FloatVector(values)
+    r.ro.globalenv["panel_r"] = r.ro.DataFrame(columns)
     extra = f", inference='{inference}'" if inference else ""
     fe_arg = "TRUE" if fixedeff else "FALSE"
     r.ro.r(
@@ -299,16 +301,15 @@ def _fit_via_augsynth(
     ci_upper: np.ndarray | None = None
     try:
         att_df_r = r.ro.r("as.data.frame(summary(res)$att)")
-        with (r.ro.default_converter + r.pandas2ri.converter).context():
-            att_df = r.ro.conversion.get_conversion().rpy2py(att_df_r)
+        att_df = pl.DataFrame({str(name): list(att_df_r.rx2(name)) for name in att_df_r.names})
         if "Estimate" in att_df.columns:
-            att_by_period = att_df["Estimate"].to_numpy(dtype=float)
+            att_by_period = att_df.get_column("Estimate").to_numpy().astype(float)
         if "Time" in att_df.columns:
-            att_periods = att_df["Time"].to_numpy(dtype=float)
+            att_periods = att_df.get_column("Time").to_numpy().astype(float)
         if "lower_bound" in att_df.columns:
-            ci_lower = att_df["lower_bound"].to_numpy(dtype=float)
+            ci_lower = att_df.get_column("lower_bound").to_numpy().astype(float)
         if "upper_bound" in att_df.columns:
-            ci_upper = att_df["upper_bound"].to_numpy(dtype=float)
+            ci_upper = att_df.get_column("upper_bound").to_numpy().astype(float)
     except Exception:
         pass
 

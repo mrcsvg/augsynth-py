@@ -560,8 +560,6 @@ def _build_act7_cells(spec: ReplicationSpec) -> list[dict]:
     cells.append(
         code(
             f"""
-        import pandas as pd
-
         post_mask_synth = ~est.pre_mask_
         post_mask_aug = ~est_aug.pre_mask_
 
@@ -581,7 +579,7 @@ def _build_act7_cells(spec: ReplicationSpec) -> list[dict]:
             / aug_pre_mean
         )
 
-        att_table = pd.DataFrame({{
+        att_table = pl.DataFrame({{
             "Estimator": ["Synth (Act 3)", "AugSynth (Act 7)", {spec.paper_att_row_label!r}],
             "ATT estimate": [f"{{synth_att:+.3f}}", f"{{aug_att:+.3f}}", {spec.paper_att_value_str!r}],
             "Pre-period RMSPE": [f"{{synth_rmspe_pre:.4f}}", f"{{aug_rmspe_pre:.4f}}", "n/a"],
