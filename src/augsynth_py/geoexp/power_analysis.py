@@ -11,9 +11,7 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import numpy as np
-import pandas as pd
 import polars as pl
-from pandas.api.types import is_numeric_dtype
 
 from augsynth_py.power import (
     DEFAULT_EFFECT_SIZES,
@@ -23,7 +21,7 @@ from augsynth_py.power import (
 )
 
 TreatmentPod = Literal["pod_A", "pod_B"]
-Ranking = Literal["geolift"] | Callable[..., pd.DataFrame]
+Ranking = Literal["geolift"] | Callable[..., pl.DataFrame]
 
 
 @dataclass(frozen=True)
@@ -39,13 +37,13 @@ class GeoLiftPowerAnalysisResults:
 
     _power_results: Mapping[str, PowerResults]
     _assignments: Mapping[str, _Assignment]
-    _simulations: pd.DataFrame
+    _simulations: pl.DataFrame
     _effect_type: str
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_power_results", MappingProxyType(dict(self._power_results)))
         object.__setattr__(self, "_assignments", MappingProxyType(dict(self._assignments)))
-        object.__setattr__(self, "_simulations", self._simulations.copy(deep=True))
+        object.__setattr__(self, "_simulations", self._simulations.clone())
 
     def get_power_results(self, sample: str) -> PowerResults:
         """Return the native single-assignment result for ``sample``."""
@@ -61,7 +59,7 @@ class GeoLiftPowerAnalysisResults:
         duration: int | None = None,
         effect_size: float | None = None,
         window: int | None = None,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Return enriched simulation rows with optional scalar filters."""
         return _filter_frame(
             self._simulations,
@@ -77,15 +75,15 @@ class GeoLiftPowerAnalysisResults:
         sample: str | None = None,
         duration: int | None = None,
         effect_size: float | None = None,
-    ) -> pd.DataFrame:
-        """Return native power curves as one pandas DataFrame."""
-        frames = []
-        for sample_name, result in self._selected_results(sample).items():
-            curve = pd.DataFrame(result.power_curve().to_dicts())
-            curve.insert(0, "sample", sample_name)
-            frames.append(curve)
-
-        combined = pd.concat(frames, ignore_index=True) if frames else _empty_power_curve()
+    ) -> pl.DataFrame:
+        """Return native power curves as one Polars DataFrame."""
+        frames = [
+            result.power_curve()
+            .with_columns(sample=pl.lit(sample_name))
+            .select("sample", pl.exclude("sample"))
+            for sample_name, result in self._selected_results(sample).items()
+        ]
+        combined = pl.concat(frames) if frames else _empty_power_curve()
         return _filter_frame(combined, duration=duration, effect_size=effect_size)
 
     def mde(
@@ -94,7 +92,7 @@ class GeoLiftPowerAnalysisResults:
         target_power: float = 0.8,
         sample: str | None = None,
         duration: int | None = None,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Return one MDE grid point per selected sample and duration."""
         records = []
         for sample_name, result in self._selected_results(sample).items():
@@ -102,18 +100,20 @@ class GeoLiftPowerAnalysisResults:
             for evaluated_duration in result.params.durations:
                 if duration is not None and evaluated_duration != duration:
                     continue
-                mde = result.mde(
-                    target_power=target_power,
-                    duration=evaluated_duration,
-                )
                 records.append(
                     {
                         "sample": sample_name,
                         "duration": evaluated_duration,
-                        "mde": np.nan if mde is None else mde,
+                        "mde": result.mde(
+                            target_power=target_power,
+                            duration=evaluated_duration,
+                        ),
                     }
                 )
-        return pd.DataFrame.from_records(records, columns=["sample", "duration", "mde"])
+        return pl.DataFrame(
+            records,
+            schema={"sample": pl.String, "duration": pl.Int64, "mde": pl.Float64},
+        )
 
     def evaluated_designs(
         self,
@@ -121,59 +121,67 @@ class GeoLiftPowerAnalysisResults:
         target_power: float = 0.8,
         sample: str | None = None,
         duration: int | None = None,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Return one analytical row per candidate assignment and duration."""
         curves = self.power_curve()
         mdes = self.mde(target_power=target_power)
         records = []
 
-        for mde_row in cast(Any, mdes.itertuples(index=False)):
-            assignment = self._assignments[mde_row.sample]
-            simulations = self.as_df(sample=mde_row.sample, duration=mde_row.duration)
-            mde = mde_row.mde
+        for mde_row in mdes.iter_rows(named=True):
+            sample_name = cast(str, mde_row["sample"])
+            evaluated_duration = cast(int, mde_row["duration"])
+            mde = cast(float | None, mde_row["mde"])
+            assignment = self._assignments[sample_name]
+            simulations = self.as_df(sample=sample_name, duration=evaluated_duration)
             at_mde = (
-                simulations.iloc[0:0]
-                if pd.isna(mde)
-                else simulations.query("effect_size == @mde and not failed")
+                simulations.clear()
+                if mde is None
+                else simulations.filter((pl.col("effect_size") == mde) & ~pl.col("failed"))
             )
-            null_rows = simulations.query("effect_size == 0 and pvalue.notna()")
+            null_rows = simulations.filter(
+                (pl.col("effect_size") == 0) & pl.col("pvalue").is_not_null()
+            )
             curve_at_mde = (
-                curves.iloc[0:0]
-                if pd.isna(mde)
-                else curves.query(
-                    "sample == @mde_row.sample and duration == @mde_row.duration "
-                    "and effect_size == @mde"
+                curves.clear()
+                if mde is None
+                else curves.filter(
+                    (pl.col("sample") == sample_name)
+                    & (pl.col("duration") == evaluated_duration)
+                    & (pl.col("effect_size") == mde)
                 )
             )
-            average_att = at_mde["att"].mean()
-            average_detected_lift = at_mde["detected_lift"].mean()
+            average_att = cast(float | None, at_mde.get_column("att").mean())
+            average_detected_lift = cast(
+                float | None,
+                at_mde.get_column("detected_lift").mean(),
+            )
             recovered_effect = (
                 average_detected_lift if self._effect_type == "multiplicative" else average_att
             )
             h1_calibration_error = (
                 round(abs(recovered_effect - mde), 3)
-                if pd.notna(recovered_effect) and pd.notna(mde)
-                else np.nan
+                if recovered_effect is not None and mde is not None
+                else None
             )
-            native_failed = simulations["pvalue"].isna()
-            enrichment_failed = simulations["enrichment_error"].notna()
+            native_failed = simulations.get_column("pvalue").is_null()
+            enrichment_failed = simulations.get_column("enrichment_error").is_not_null()
             failed = native_failed | enrichment_failed
 
             records.append(
                 {
-                    "sample": mde_row.sample,
-                    "duration": mde_row.duration,
-                    "treatment_markets": assignment.treatment_markets,
-                    "donor_markets": assignment.donor_markets,
+                    "sample": sample_name,
+                    "duration": evaluated_duration,
+                    "treatment_markets": list(assignment.treatment_markets),
+                    "donor_markets": list(assignment.donor_markets),
                     "treatment_pod": assignment.treatment_pod,
                     "mde": mde,
-                    "power_at_mde": _first_or_nan(curve_at_mde, "power"),
+                    "power_at_mde": _first_or_none(curve_at_mde, "power"),
                     "average_att": average_att,
                     "average_detected_lift": average_detected_lift,
                     "h1_calibration_error": h1_calibration_error,
-                    "null_bias": null_rows["detected_lift"].mean(),
-                    "average_rmspe_pre": at_mde["rmspe_pre"].mean(),
-                    "n_simulations": len(simulations),
+                    "null_bias": null_rows.get_column("detected_lift").mean(),
+                    "average_rmspe_pre": at_mde.get_column("rmspe_pre").mean(),
+                    "n_simulations": simulations.height,
                     "n_valid": int((~failed).sum()),
                     "n_native_failed": int(native_failed.sum()),
                     "n_enrichment_failed": int(enrichment_failed.sum()),
@@ -181,7 +189,10 @@ class GeoLiftPowerAnalysisResults:
                 }
             )
 
-        designs = pd.DataFrame.from_records(records, columns=_EVALUATED_DESIGN_COLUMNS)
+        designs = pl.DataFrame(
+            records,
+            schema_overrides={column: pl.Float64 for column in _EVALUATED_DESIGN_FLOAT_COLUMNS},
+        ).select(_EVALUATED_DESIGN_COLUMNS)
         return _filter_frame(designs, sample=sample, duration=duration)
 
     def rank_designs(
@@ -192,21 +203,21 @@ class GeoLiftPowerAnalysisResults:
         duration: int | None = None,
         target_power: float = 0.8,
         **ranking_kwargs: Any,
-    ) -> pd.DataFrame:
-        """Rank evaluated designs with GeoLift or a pandas-style callable."""
+    ) -> pl.DataFrame:
+        """Rank evaluated designs with GeoLift or a Polars callable."""
         designs = self.evaluated_designs(
             target_power=target_power,
             sample=sample,
             duration=duration,
         )
         if callable(ranking):
-            ranked = ranking(designs.copy(deep=True), **ranking_kwargs)
-            if not isinstance(ranked, pd.DataFrame):
-                raise TypeError("A custom ranking must return a pandas DataFrame")
-            missing = [column for column in ("sample", "duration") if column not in ranked]
+            ranked = ranking(designs.clone(), **ranking_kwargs)
+            if not isinstance(ranked, pl.DataFrame):
+                raise TypeError("A custom ranking must return a Polars DataFrame")
+            missing = [column for column in ("sample", "duration") if column not in ranked.columns]
             if missing:
                 raise ValueError(f"Custom ranking removed required columns: {missing}")
-            return ranked.copy(deep=True)
+            return ranked.clone()
         if ranking != "geolift":
             raise ValueError("ranking must be 'geolift' or a callable")
         if ranking_kwargs:
@@ -224,7 +235,7 @@ class GeoLiftPowerAnalysisResults:
         duration: int | None = None,
         target_power: float = 0.8,
         **ranking_kwargs: Any,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Return the first ranked design as a one-row DataFrame."""
         ranked = self.rank_designs(
             ranking,
@@ -233,9 +244,9 @@ class GeoLiftPowerAnalysisResults:
             target_power=target_power,
             **ranking_kwargs,
         )
-        if ranked.empty:
+        if ranked.is_empty():
             raise ValueError("Ranking returned no eligible designs")
-        return ranked.iloc[[0]].copy(deep=True)
+        return ranked.head(1)
 
     def _selected_results(self, sample: str | None) -> dict[str, PowerResults]:
         if sample is None:
@@ -293,10 +304,10 @@ class GeoLiftPowerAnalysis:
 
     def evaluate(
         self,
-        panel: pd.DataFrame,
+        panel: pl.DataFrame,
         samples: Mapping[str, Mapping[str, Sequence[Any]]],
     ) -> GeoLiftPowerAnalysisResults:
-        """Evaluate named candidate assignments against a pandas panel."""
+        """Evaluate named candidate assignments against a Polars panel."""
         durations = _normalize_durations(self.durations)
         validated_panel = _validate_panel(
             panel,
@@ -307,7 +318,9 @@ class GeoLiftPowerAnalysis:
         )
         assignments = _validate_assignments(
             samples,
-            known_markets=validated_panel[self.unit_col].drop_duplicates().tolist(),
+            known_markets=validated_panel.get_column(self.unit_col)
+            .unique(maintain_order=True)
+            .to_list(),
             treatment_pod=self.treatment_pod,
         )
 
@@ -315,9 +328,9 @@ class GeoLiftPowerAnalysis:
         enriched = []
         for sample, assignment in assignments.items():
             markets = (*assignment.treatment_markets, *assignment.donor_markets)
-            sample_panel = validated_panel.loc[validated_panel[self.unit_col].isin(markets)].copy()
+            sample_panel = validated_panel.filter(pl.col(self.unit_col).is_in(markets))
             native = simulate_power(
-                pl.from_pandas(sample_panel, include_index=False),
+                sample_panel,
                 estimator=self._estimator,
                 unit=self.unit_col,
                 time=self.time_col,
@@ -353,7 +366,7 @@ class GeoLiftPowerAnalysis:
         return GeoLiftPowerAnalysisResults(
             power_results,
             assignments,
-            pd.concat(enriched, ignore_index=True),
+            pl.concat(enriched),
             self.effect_type,
         )
 
@@ -440,45 +453,45 @@ def _validate_configuration(
 
 
 def _validate_panel(
-    panel: pd.DataFrame,
+    panel: pl.DataFrame,
     *,
     unit_col: str,
     time_col: str,
     outcome_col: str,
     minimum_periods: int,
-) -> pd.DataFrame:
-    if not isinstance(panel, pd.DataFrame):
-        raise TypeError("panel must be a pandas DataFrame")
+) -> pl.DataFrame:
+    if not isinstance(panel, pl.DataFrame):
+        raise TypeError("panel must be a Polars DataFrame")
     required = [unit_col, time_col, outcome_col]
-    missing = [column for column in required if column not in panel]
+    missing = [column for column in required if column not in panel.columns]
     if missing:
         raise ValueError(f"Panel is missing required columns: {missing}")
 
-    validated = panel.loc[:, required].copy()
-    if validated.isna().any().any():
+    validated = panel.select(required)
+    if any(validated.null_count().row(0)):
         raise ValueError("Power analysis requires a complete panel without missing values")
-    if validated.duplicated([unit_col, time_col]).any():
+    if validated.select(pl.struct(unit_col, time_col).is_duplicated().any()).item():
         raise ValueError("Panel contains duplicate market-time observations")
-    if not is_numeric_dtype(validated[outcome_col]):
+    outcome = validated.get_column(outcome_col)
+    if not outcome.dtype.is_numeric():
         raise ValueError(f"Outcome column {outcome_col!r} must be numeric")
-    if not np.isfinite(validated[outcome_col].to_numpy()).all():
+    if not outcome.is_finite().all():
         raise ValueError(f"Outcome column {outcome_col!r} must contain only finite values")
 
-    market_count = validated[unit_col].nunique()
-    period_count = validated[time_col].nunique()
+    market_count = validated.get_column(unit_col).n_unique()
+    period_count = validated.get_column(time_col).n_unique()
     if market_count < 2:
         raise ValueError("Power analysis requires at least two markets")
-    if len(validated) != market_count * period_count:
+    if validated.height != market_count * period_count:
         raise ValueError("Power analysis requires one observation per market and time")
     if period_count < minimum_periods:
         raise ValueError(
             f"Panel has {period_count} periods but at least {minimum_periods} are required"
         )
     try:
-        validated.sort_values([time_col, unit_col], kind="stable")
-    except TypeError as exc:
+        return validated.sort([time_col, unit_col], maintain_order=True)
+    except pl.exceptions.InvalidOperationError as exc:
         raise ValueError("Panel time and market identifiers must be sortable") from exc
-    return validated
 
 
 def _validate_assignments(
@@ -550,34 +563,38 @@ def _enrich_simulations(
     *,
     sample: str,
     assignment: _Assignment,
-    panel: pd.DataFrame,
+    panel: pl.DataFrame,
     unit_col: str,
     time_col: str,
     outcome_col: str,
     effect_type: str,
-) -> pd.DataFrame:
-    simulations = pd.DataFrame(result.simulations.to_dicts())
-    periods = sorted(panel[time_col].drop_duplicates().tolist())
+) -> pl.DataFrame:
+    periods = panel.get_column(time_col).unique().sort().to_list()
     period_positions = {period: position for position, period in enumerate(periods)}
     records = []
 
-    for row in simulations.to_dict("records"):
+    for row in result.simulations.iter_rows(named=True):
         start = period_positions[row["treatment_start"]]
         end = period_positions[row["treatment_end"]]
         window_periods = periods[start : end + 1]
-        treated_outcomes = panel.loc[
-            panel[unit_col].isin(assignment.treatment_markets)
-            & panel[time_col].isin(window_periods)
-        ]
-        base_post_total = treated_outcomes.groupby(time_col, sort=False)[outcome_col].mean().sum()
+        base_post_total = (
+            panel.filter(
+                pl.col(unit_col).is_in(assignment.treatment_markets)
+                & pl.col(time_col).is_in(window_periods)
+            )
+            .group_by(time_col)
+            .agg(pl.col(outcome_col).mean())
+            .get_column(outcome_col)
+            .sum()
+        )
         injected_post_total = (
             base_post_total * (1 + row["effect_size"])
             if effect_type == "multiplicative"
             else base_post_total + row["effect_size"] * row["duration"]
         )
-        estimated_incrementality = np.nan
-        synthetic_post_total = np.nan
-        detected_lift = np.nan
+        estimated_incrementality = None
+        synthetic_post_total = None
+        detected_lift = None
         enrichment_error = None
 
         if row["error"] is None:
@@ -592,14 +609,14 @@ def _enrich_simulations(
                 else:
                     detected_lift = estimated_incrementality / synthetic_post_total
                     if not math.isfinite(detected_lift):
-                        detected_lift = np.nan
+                        detected_lift = None
                         enrichment_error = "Detected lift is non-finite"
 
         records.append(
             {
                 "sample": sample,
-                "treatment_markets": assignment.treatment_markets,
-                "donor_markets": assignment.donor_markets,
+                "treatment_markets": list(assignment.treatment_markets),
+                "donor_markets": list(assignment.donor_markets),
                 "treatment_pod": assignment.treatment_pod,
                 **row,
                 "injected_treated_post_total": injected_post_total,
@@ -610,81 +627,112 @@ def _enrich_simulations(
                 "failed": row["error"] is not None or enrichment_error is not None,
             }
         )
-    return pd.DataFrame.from_records(records)
-
-
-def _filter_frame(frame: pd.DataFrame, **filters: object) -> pd.DataFrame:
-    filtered = frame
-    for column, value in filters.items():
-        if value is not None:
-            filtered = filtered.loc[filtered[column] == value]
-    return filtered.reset_index(drop=True).copy(deep=True)
-
-
-def _first_or_nan(frame: pd.DataFrame, column: str) -> float:
-    return np.nan if frame.empty else float(frame.iloc[0][column])
-
-
-def _empty_power_curve() -> pd.DataFrame:
-    return pd.DataFrame(
-        columns=[
-            "sample",
-            "duration",
-            "effect_size",
-            "n_simulations",
-            "n_failed",
-            "n_detected",
-            "power",
-        ]
+    return pl.DataFrame(
+        records,
+        schema_overrides={
+            "effect_size": pl.Float64,
+            "pvalue": pl.Float64,
+            "att": pl.Float64,
+            "att_pct": pl.Float64,
+            "rmspe_pre": pl.Float64,
+            "error": pl.String,
+            "injected_treated_post_total": pl.Float64,
+            "estimated_incrementality": pl.Float64,
+            "synthetic_post_total": pl.Float64,
+            "detected_lift": pl.Float64,
+            "enrichment_error": pl.String,
+        },
     )
 
 
-def _rank_geolift(designs: pd.DataFrame) -> pd.DataFrame:
-    if designs.empty:
-        return designs.assign(rank=pd.Series(dtype="float64"))
+def _filter_frame(frame: pl.DataFrame, **filters: object) -> pl.DataFrame:
+    predicates = [pl.col(column) == value for column, value in filters.items() if value is not None]
+    return (frame.filter(*predicates) if predicates else frame).clone()
+
+
+def _first_or_none(frame: pl.DataFrame, column: str) -> float | None:
+    return None if frame.is_empty() else cast(float, frame[0, column])
+
+
+def _empty_power_curve() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "sample": pl.String,
+            "duration": pl.Int64,
+            "effect_size": pl.Float64,
+            "n_simulations": pl.UInt32,
+            "n_failed": pl.UInt32,
+            "n_detected": pl.UInt32,
+            "power": pl.Float64,
+        }
+    )
+
+
+def _rank_geolift(designs: pl.DataFrame) -> pl.DataFrame:
+    if designs.is_empty():
+        return designs.with_columns(pl.lit(None, dtype=pl.Float64).alias("rank"))
 
     incomplete = (
-        designs["mde"].isna()
-        | designs["power_at_mde"].isna()
-        | designs["h1_calibration_error"].isna()
-        | designs["n_failed"].gt(0)
+        pl.col("mde").is_null()
+        | pl.col("mde").is_nan()
+        | pl.col("power_at_mde").is_null()
+        | pl.col("power_at_mde").is_nan()
+        | pl.col("h1_calibration_error").is_null()
+        | pl.col("h1_calibration_error").is_nan()
+        | (pl.col("n_failed") > 0)
     )
-    eligible = designs.loc[~incomplete].copy(deep=True)
-    ineligible = designs.loc[incomplete].copy(deep=True)
+    eligible = designs.filter(~incomplete)
+    ineligible = designs.filter(incomplete)
 
-    if not eligible.empty:
-        eligible = eligible.assign(
-            _rank_mde=lambda x: x["mde"].abs().rank(method="dense"),
-            _rank_power=lambda x: x["power_at_mde"].rank(method="dense"),
-            _rank_calibration=lambda x: x["h1_calibration_error"].round(3).rank(method="dense"),
+    if not eligible.is_empty():
+        eligible = (
+            eligible.with_columns(
+                _rank_mde=pl.col("mde").abs().rank("dense"),
+                _rank_power=pl.col("power_at_mde").rank("dense"),
+                _rank_calibration=pl.col("h1_calibration_error").round(3).rank("dense"),
+                _treatment_key=pl.col("treatment_markets")
+                .list.eval(pl.element().cast(pl.String).str.to_lowercase())
+                .list.sort()
+                .list.join("\0"),
+            )
+            .with_columns(
+                pl.mean_horizontal("_rank_mde", "_rank_power", "_rank_calibration").alias(
+                    "_composite_rank"
+                )
+            )
+            .with_columns(rank=pl.col("_composite_rank").rank("min"))
+            .sort(["rank", "_treatment_key"], maintain_order=True)
         )
-        eligible["_composite_rank"] = eligible[
-            ["_rank_mde", "_rank_power", "_rank_calibration"]
-        ].mean(axis="columns")
-        eligible["rank"] = eligible["_composite_rank"].rank(method="min")
-        eligible["_treatment_key"] = eligible["treatment_markets"].map(
-            lambda markets: tuple(sorted(str(market).lower() for market in markets))
-        )
-        eligible = eligible.sort_values(["rank", "_treatment_key"], kind="stable")
 
-    ineligible = ineligible.sort_values(["sample", "duration"], kind="stable")
-    rank_offset = int(eligible["rank"].max()) if not eligible.empty else 0
-    ineligible["rank"] = np.arange(
-        rank_offset + 1,
-        rank_offset + len(ineligible) + 1,
-        dtype=float,
+    rank_offset = (
+        int(cast(float, eligible.get_column("rank").max())) if not eligible.is_empty() else 0
     )
-    return pd.concat([eligible, ineligible], ignore_index=True).drop(
-        columns=[
-            "_rank_mde",
-            "_rank_power",
-            "_rank_calibration",
-            "_composite_rank",
-            "_treatment_key",
-        ],
-        errors="ignore",
+    ineligible = ineligible.sort(["sample", "duration"], maintain_order=True).with_columns(
+        rank=pl.int_range(
+            rank_offset + 1,
+            rank_offset + ineligible.height + 1,
+            eager=True,
+        ).cast(pl.Float64)
+    )
+    return pl.concat([eligible, ineligible], how="diagonal_relaxed").drop(
+        "_rank_mde",
+        "_rank_power",
+        "_rank_calibration",
+        "_composite_rank",
+        "_treatment_key",
+        strict=False,
     )
 
+
+_EVALUATED_DESIGN_FLOAT_COLUMNS = [
+    "mde",
+    "power_at_mde",
+    "average_att",
+    "average_detected_lift",
+    "h1_calibration_error",
+    "null_bias",
+    "average_rmspe_pre",
+]
 
 _EVALUATED_DESIGN_COLUMNS = [
     "sample",

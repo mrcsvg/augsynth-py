@@ -25,6 +25,8 @@ import numpy as np
 import polars as pl
 import pytest
 
+from tests.validation_against_r._r_frames import from_r_data_frame
+
 # ---------------------------------------------------------------------------
 # Skip-collection if the R toolchain is unavailable
 # ---------------------------------------------------------------------------
@@ -112,19 +114,9 @@ def r_geolift_pretest(r_session: Any) -> pl.DataFrame:
     if not _r_package_available("GeoLift"):
         pytest.skip("R package 'GeoLift' is not installed.")
 
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects.conversion import localconverter
-
     r_session("suppressPackageStartupMessages(library(GeoLift))")
     r_session("data(GeoLift_PreTest)")
-    r_df = r_session("GeoLift_PreTest")
-
-    # Convert R data.frame -> pandas -> polars. Going through pandas avoids
-    # rpy2 / polars ABI surprises, and the cost is negligible for this dataset.
-    with localconverter(rpy2.robjects.default_converter + pandas2ri.converter):
-        pandas_df = rpy2.robjects.conversion.rpy2py(r_df)
-
-    return pl.from_pandas(pandas_df)
+    return from_r_data_frame(r_session("GeoLift_PreTest"))
 
 
 # ---------------------------------------------------------------------------

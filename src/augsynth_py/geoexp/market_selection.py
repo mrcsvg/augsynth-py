@@ -4,32 +4,28 @@ import copy
 from collections.abc import Iterable, Sequence
 from dataclasses import InitVar, dataclass, field
 from numbers import Integral
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
-import pandas as pd
-from pandas.api.types import is_numeric_dtype
+import polars as pl
 
 
 @dataclass(frozen=True, eq=False)
 class MarketSelectionResults:
     """Candidate assignments produced by market selection."""
 
-    _candidates: pd.DataFrame
+    _candidates: pl.DataFrame
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_candidates", self._candidates.copy(deep=True))
+        object.__setattr__(self, "_candidates", self._candidates.clone())
 
-    def as_df(self) -> pd.DataFrame:
+    def as_df(self) -> pl.DataFrame:
         """Return the candidate table as a defensive copy."""
-        return self._candidates.copy(deep=True)
+        return self._candidates.clone()
 
     def as_samples(self) -> dict[str, dict[str, list[object]]]:
         """Return assignments with treatment in ``pod_A`` and donors in ``pod_B``."""
-        rows = self._candidates[["treatment_markets", "donor_markets"]].itertuples(
-            index=False,
-            name=None,
-        )
+        rows = self._candidates.select("treatment_markets", "donor_markets").iter_rows()
         return {
             f"sample{sample_number}": {
                 "pod_A": list(treatment_markets),
@@ -101,7 +97,7 @@ class MarketSelector:
         object.__setattr__(self, "exclude_markets", excluded)
         object.__setattr__(self, "_rng", copy.deepcopy(rng))
 
-    def select(self, data: pd.DataFrame) -> MarketSelectionResults:
+    def select(self, data: pl.DataFrame) -> MarketSelectionResults:
         """Return candidate treatment groups and their corresponding donor pools.
 
         ``data`` must be a complete long panel with one row per market and time.
@@ -121,7 +117,7 @@ class MarketSelector:
 
 
 def _select_markets(
-    data: pd.DataFrame,
+    data: pl.DataFrame,
     *,
     market_counts: Sequence[int],
     location_col: str,
@@ -131,10 +127,10 @@ def _select_markets(
     exclude_markets: Sequence[str],
     run_stochastic_process: bool,
     rng: np.random.Generator | None,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     panel = _normalize_locations(data, location_col=location_col)
-    original_markets = data[location_col].drop_duplicates().tolist()
-    normalized_markets = panel[location_col].drop_duplicates().tolist()
+    original_markets = data.get_column(location_col).unique(maintain_order=True).to_list()
+    normalized_markets = panel.get_column(location_col).unique(maintain_order=True).to_list()
     original_identifier = dict(zip(normalized_markets, original_markets, strict=True))
     panel = _validate_panel(
         panel,
@@ -142,7 +138,7 @@ def _select_markets(
         time_col=time_col,
         outcome_col=outcome_col,
     )
-    all_markets = panel[location_col].drop_duplicates().tolist()
+    all_markets = panel.get_column(location_col).unique(maintain_order=True).to_list()
 
     _validate_known_markets(include_markets, all_markets, name="include_markets")
     _validate_known_markets(exclude_markets, all_markets, name="exclude_markets")
@@ -186,48 +182,19 @@ def _select_markets(
             {
                 "market_count": market_count,
                 "candidate_id": candidate_id,
-                "treatment_markets": tuple(original_identifier[market] for market in group),
-                "donor_markets": tuple(
+                "treatment_markets": [original_identifier[market] for market in group],
+                "donor_markets": [
                     original_identifier[market] for market in all_markets if market not in group
-                ),
+                ],
             }
             for candidate_id, group in enumerate(groups, start=1)
         )
 
-    return pd.DataFrame.from_records(
-        records,
-        columns=["market_count", "candidate_id", "treatment_markets", "donor_markets"],
-    )
-
-
-def _market_correlations(
-    data: pd.DataFrame,
-    *,
-    location_col: str,
-    time_col: str,
-    outcome_col: str,
-) -> pd.DataFrame:
-    panel = _validate_panel(
-        data,
-        location_col=location_col,
-        time_col=time_col,
-        outcome_col=outcome_col,
-    )
-    market_order = panel[location_col].drop_duplicates().tolist()
-    outcomes = panel.pivot_table(
-        index=time_col,
-        columns=location_col,
-        values=outcome_col,
-    ).reindex(columns=market_order)
-    constant_markets = outcomes.columns[outcomes.eq(outcomes.iloc[0]).all()].tolist()
-    if constant_markets:
-        raise ValueError(f"Cannot correlate constant markets: {constant_markets}")
-
-    return outcomes.corr().rename_axis(index=location_col, columns=location_col)
+    return pl.DataFrame(records)
 
 
 def _rank_eligible_markets(
-    panel: pd.DataFrame,
+    panel: pl.DataFrame,
     *,
     eligible_markets: Sequence[str],
     location_col: str,
@@ -238,54 +205,64 @@ def _rank_eligible_markets(
         market = eligible_markets[0]
         return {market: [market]}
 
-    correlations = _market_correlations(
-        panel.loc[panel[location_col].isin(eligible_markets)],
-        location_col=location_col,
-        time_col=time_col,
-        outcome_col=outcome_col,
+    outcomes = (
+        panel.filter(pl.col(location_col).is_in(eligible_markets))
+        .pivot(on=location_col, index=time_col, values=outcome_col)
+        .sort(time_col)
+        .select(eligible_markets)
     )
+    constant_markets = [
+        market for market in eligible_markets if outcomes.get_column(market).n_unique() == 1
+    ]
+    if constant_markets:
+        raise ValueError(f"Cannot correlate constant markets: {constant_markets}")
+
+    correlations = np.corrcoef(outcomes.to_numpy(), rowvar=False)
     return {
-        anchor: [anchor, *_ranked_neighbors(correlations, anchor)] for anchor in eligible_markets
+        anchor: [
+            anchor,
+            *[
+                eligible_markets[index]
+                for index in sorted(
+                    (index for index in range(len(eligible_markets)) if index != anchor_index),
+                    key=lambda index: correlations[anchor_index, index],
+                    reverse=True,
+                )
+            ],
+        ]
+        for anchor_index, anchor in enumerate(eligible_markets)
     }
 
 
-def _ranked_neighbors(correlations: pd.DataFrame, anchor: str) -> list[str]:
-    similarities: pd.Series[Any] = cast(Any, correlations.loc[anchor])
-    similarities = similarities.drop(index=anchor)
-    return cast(
-        list[str],
-        similarities.sort_values(ascending=False, kind="stable").index.tolist(),
-    )
-
-
 def _validate_panel(
-    data: pd.DataFrame,
+    data: pl.DataFrame,
     *,
     location_col: str,
     time_col: str,
     outcome_col: str,
-) -> pd.DataFrame:
-    if not isinstance(data, pd.DataFrame):
-        raise TypeError("data must be a pandas DataFrame")
+) -> pl.DataFrame:
+    if not isinstance(data, pl.DataFrame):
+        raise TypeError("data must be a Polars DataFrame")
 
     required = [location_col, time_col, outcome_col]
-    missing = [column for column in required if column not in data]
+    missing = [column for column in required if column not in data.columns]
     if missing:
         raise ValueError(f"Data is missing required columns: {missing}")
 
-    panel = data.loc[:, required].copy()
-    if panel.isna().any().any():
+    panel = data.select(required)
+    if any(panel.null_count().row(0)):
         raise ValueError("Market selection requires a complete panel without missing values")
-    if panel.duplicated([location_col, time_col]).any():
+    if panel.select(pl.struct(location_col, time_col).is_duplicated().any()).item():
         raise ValueError("Panel contains duplicate market-time observations")
-    if not is_numeric_dtype(panel[outcome_col]):
+    outcome = panel.get_column(outcome_col)
+    if not outcome.dtype.is_numeric():
         raise ValueError(f"Outcome column '{outcome_col}' must be numeric")
-    if not np.isfinite(panel[outcome_col].to_numpy()).all():
+    if not outcome.is_finite().all():
         raise ValueError(f"Outcome column '{outcome_col}' must contain only finite values")
 
-    market_count = panel[location_col].nunique()
-    time_count = panel[time_col].nunique()
-    if len(panel) != market_count * time_count:
+    market_count = panel.get_column(location_col).n_unique()
+    time_count = panel.get_column(time_col).n_unique()
+    if panel.height != market_count * time_count:
         raise ValueError("Market selection requires one observation per market and time")
     if market_count < 2:
         raise ValueError("Market selection requires at least two markets")
@@ -293,18 +270,16 @@ def _validate_panel(
     return panel
 
 
-def _normalize_locations(data: pd.DataFrame, *, location_col: str) -> pd.DataFrame:
-    if not isinstance(data, pd.DataFrame):
-        raise TypeError("data must be a pandas DataFrame")
-    if location_col not in data:
+def _normalize_locations(data: pl.DataFrame, *, location_col: str) -> pl.DataFrame:
+    if not isinstance(data, pl.DataFrame):
+        raise TypeError("data must be a Polars DataFrame")
+    if location_col not in data.columns:
         raise ValueError(f"Data is missing required columns: ['{location_col}']")
-    if data[location_col].isna().any():
+    if data.get_column(location_col).null_count():
         raise ValueError("Market selection requires market identifiers without missing values")
 
-    locations: pd.Series[Any] = data[location_col].astype(str)
-    panel = data.copy().assign(**{location_col: locations.str.lower()})
-    original_count = data[location_col].nunique()
-    if panel[location_col].nunique() != original_count:
+    panel = data.with_columns(pl.col(location_col).cast(pl.String).str.to_lowercase())
+    if panel.get_column(location_col).n_unique() != data.get_column(location_col).n_unique():
         raise ValueError("Market identifiers must remain unique after case normalization")
     return panel
 

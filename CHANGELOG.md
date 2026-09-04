@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Added pandas as a runtime dependency for the GeoLift-shaped orchestration
-  API, which accepts pandas panels and returns pandas result tables.
+- Standardized the GeoLift-shaped orchestration API on Polars and removed
+  pandas from the runtime dependencies.
 
 ## [0.5.0] - 2026-08-30
 

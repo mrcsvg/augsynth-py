@@ -1,8 +1,7 @@
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
-from pandas.testing import assert_frame_equal
+from polars.testing import assert_frame_equal
 
 from augsynth_py import DEFAULT_EFFECT_SIZES, PowerResults, Synth
 from augsynth_py.geoexp import (
@@ -11,14 +10,14 @@ from augsynth_py.geoexp import (
 )
 
 
-def make_panel() -> pd.DataFrame:
+def make_panel() -> pl.DataFrame:
     outcomes = {
         "A": [20, 22, 21, 25, 24, 28, 27, 30, 32, 31, 34, 36],
         "B": [10, 11, 11, 13, 12, 14, 14, 15, 16, 16, 17, 18],
         "C": [7, 8, 7, 9, 9, 10, 9, 11, 11, 12, 12, 13],
         "outside": [100, 1, 100, 1, 100, 1, 100, 1, 100, 1, 100, 1],
     }
-    return pd.DataFrame(
+    return pl.DataFrame(
         [
             {"time": time, "location": location, "Y": values[time - 1]}
             for time in range(1, 13)
@@ -27,9 +26,9 @@ def make_panel() -> pd.DataFrame:
     )
 
 
-def test_evaluator_returns_enriched_results_for_a_pandas_panel() -> None:
+def test_evaluator_returns_enriched_results_for_a_polars_panel() -> None:
     panel = make_panel()
-    original = panel.copy(deep=True)
+    original = panel.clone()
     samples = {"candidate": {"pod_A": ["A"], "pod_B": ["B", "C"]}}
 
     results = GeoLiftPowerAnalysis(
@@ -45,17 +44,17 @@ def test_evaluator_returns_enriched_results_for_a_pandas_panel() -> None:
 
     assert isinstance(results, GeoLiftPowerAnalysisResults)
     assert isinstance(results.get_power_results("candidate"), PowerResults)
-    assert simulations[["duration", "effect_size", "window"]].to_dict("records") == [
+    assert simulations.select("duration", "effect_size", "window").to_dicts() == [
         {"duration": 2, "effect_size": 0.0, "window": 0},
         {"duration": 2, "effect_size": 0.0, "window": 1},
         {"duration": 2, "effect_size": 0.2, "window": 0},
         {"duration": 2, "effect_size": 0.2, "window": 1},
     ]
-    assert simulations["sample"].tolist() == ["candidate"] * 4
-    assert simulations["treatment_markets"].tolist() == [("A",)] * 4
-    assert simulations["donor_markets"].tolist() == [("B", "C")] * 4
-    assert simulations["treatment_pod"].tolist() == ["pod_A"] * 4
-    assert simulations["detected_lift"].notna().all()
+    assert simulations.get_column("sample").to_list() == ["candidate"] * 4
+    assert simulations.get_column("treatment_markets").to_list() == [["A"]] * 4
+    assert simulations.get_column("donor_markets").to_list() == [["B", "C"]] * 4
+    assert simulations.get_column("treatment_pod").to_list() == ["pod_A"] * 4
+    assert simulations.get_column("detected_lift").is_not_null().all()
     assert set(results.get_power_results("candidate").params.treated) == {"A"}
     assert_frame_equal(panel, original)
     assert samples == {"candidate": {"pod_A": ["A"], "pod_B": ["B", "C"]}}
@@ -74,7 +73,7 @@ def test_detected_lift_uses_the_post_period_synthetic_total() -> None:
         {"candidate": {"pod_A": ["A"], "pod_B": ["B", "C"]}},
     )
 
-    simulation = results.as_df(effect_size=0.2, window=0).iloc[0]
+    simulation = results.as_df(effect_size=0.2, window=0).row(0, named=True)
 
     assert simulation["injected_treated_post_total"] == pytest.approx(84.0)
     assert simulation["estimated_incrementality"] == pytest.approx(23.4)
@@ -82,12 +81,12 @@ def test_detected_lift_uses_the_post_period_synthetic_total() -> None:
     assert simulation["detected_lift"] == pytest.approx(0.3861386138613861)
     assert simulation["detected_lift"] != pytest.approx(simulation["att_pct"])
 
-    design = results.evaluated_designs(target_power=0.1).iloc[0]
+    design = results.evaluated_designs(target_power=0.1).row(0, named=True)
     assert design["h1_calibration_error"] == 0.164
     assert design["null_bias"] == pytest.approx(0.1368311833297224)
 
 
-def test_collection_methods_filter_and_return_defensive_pandas_copies() -> None:
+def test_collection_methods_filter_and_return_defensive_polars_copies() -> None:
     results = GeoLiftPowerAnalysis(
         estimator=Synth(),
         durations=[2, 3],
@@ -105,23 +104,23 @@ def test_collection_methods_filter_and_return_defensive_pandas_copies() -> None:
     mde = results.mde(target_power=0.1, duration=2)
     designs = results.evaluated_designs(target_power=0.1, duration=2)
 
-    assert isinstance(simulations, pd.DataFrame) and len(simulations) == 1
-    assert isinstance(curve, pd.DataFrame) and len(curve) == 1
-    assert isinstance(mde, pd.DataFrame) and mde.to_dict("records") == [
+    assert isinstance(simulations, pl.DataFrame) and simulations.height == 1
+    assert isinstance(curve, pl.DataFrame) and curve.height == 1
+    assert isinstance(mde, pl.DataFrame) and mde.to_dicts() == [
         {"sample": "candidate", "duration": 2, "mde": 0.2}
     ]
-    assert isinstance(designs, pd.DataFrame) and len(designs) == 1
-    simulations.loc[0, "sample"] = "changed"
-    curve.loc[0, "power"] = -1
-    designs.loc[0, "n_failed"] = 99
+    assert isinstance(designs, pl.DataFrame) and designs.height == 1
+    simulations = simulations.with_columns(pl.lit("changed").alias("sample"))
+    curve = curve.with_columns(pl.lit(-1.0).alias("power"))
+    designs = designs.with_columns(pl.lit(99).alias("n_failed"))
 
-    assert results.as_df().loc[0, "sample"] == "candidate"
-    assert results.power_curve().loc[0, "power"] >= 0
-    assert results.evaluated_designs(target_power=0.1).loc[0, "n_failed"] == 0
-    assert results.as_df(sample="unknown").empty
-    assert results.power_curve(sample="unknown").empty
-    assert results.mde(sample="unknown").empty
-    assert results.evaluated_designs(sample="unknown").empty
+    assert results.as_df()[0, "sample"] == "candidate"
+    assert results.power_curve()[0, "power"] >= 0
+    assert results.evaluated_designs(target_power=0.1)[0, "n_failed"] == 0
+    assert results.as_df(sample="unknown").is_empty()
+    assert results.power_curve(sample="unknown").is_empty()
+    assert results.mde(sample="unknown").is_empty()
+    assert results.evaluated_designs(sample="unknown").is_empty()
     with pytest.raises(KeyError, match="Unknown sample"):
         results.get_power_results("unknown")
 
@@ -157,14 +156,17 @@ def test_reordering_samples_does_not_change_iid_results() -> None:
     ]
     sort_columns = ["sample", "duration", "effect_size", "window"]
     assert_frame_equal(
-        first[comparison_columns].sort_values(sort_columns).reset_index(drop=True),
-        repeated[comparison_columns].sort_values(sort_columns).reset_index(drop=True),
+        first.select(comparison_columns).sort(sort_columns),
+        repeated.select(comparison_columns).sort(sort_columns),
     )
     assert_frame_equal(
-        first[comparison_columns].sort_values(sort_columns).reset_index(drop=True),
-        reversed_samples[comparison_columns].sort_values(sort_columns).reset_index(drop=True),
+        first.select(comparison_columns).sort(sort_columns),
+        reversed_samples.select(comparison_columns).sort(sort_columns),
     )
-    assert reversed_samples["sample"].drop_duplicates().tolist() == ["second", "first"]
+    assert reversed_samples.get_column("sample").unique(maintain_order=True).to_list() == [
+        "second",
+        "first",
+    ]
 
 
 def test_samples_are_sequential_and_n_jobs_reaches_simulate_power(monkeypatch) -> None:
@@ -217,7 +219,7 @@ def test_samples_are_sequential_and_n_jobs_reaches_simulate_power(monkeypatch) -
         n_jobs=3,
     ).evaluate(make_panel(), samples)
 
-    assert results.as_df()["sample"].tolist() == ["first", "second"]
+    assert results.as_df().get_column("sample").to_list() == ["first", "second"]
     assert calls == [
         {"markets": ["A", "B"], "treated": ("A",), "n_jobs": 3},
         {"markets": ["A", "C"], "treated": ("C",), "n_jobs": 3},
@@ -244,11 +246,11 @@ def test_recorded_failures_remain_visible_in_evaluated_designs() -> None:
     )
     designs = results.evaluated_designs()
 
-    assert results.as_df()["error"].notna().all()
-    assert designs.loc[0, "mde"] is None or pd.isna(designs.loc[0, "mde"])
-    assert designs.loc[0, "n_native_failed"] == 2
-    assert designs.loc[0, "n_failed"] == 2
-    assert results.rank_designs().loc[0, "sample"] == "candidate"
+    assert results.as_df().get_column("error").is_not_null().all()
+    assert designs[0, "mde"] is None
+    assert designs[0, "n_native_failed"] == 2
+    assert designs[0, "n_failed"] == 2
+    assert results.rank_designs()[0, "sample"] == "candidate"
 
 
 def test_custom_ranking_can_join_filter_and_sort_without_mutating_results() -> None:
@@ -265,14 +267,14 @@ def test_custom_ranking_can_join_filter_and_sort_without_mutating_results() -> N
             "second": {"pod_A": ["B"], "pod_B": ["A", "C"]},
         },
     )
-    external = pd.DataFrame({"sample": ["first", "second"], "outcome_share": [0.6, 0.2]})
+    external = pl.DataFrame({"sample": ["first", "second"], "outcome_share": [0.6, 0.2]})
 
     def eligible_lowest_mde(designs, *, market_data, maximum_share):
-        designs.loc[:, "temporary"] = True
         return (
-            designs.merge(market_data, on="sample")
-            .query("outcome_share <= @maximum_share")
-            .sort_values("mde")
+            designs.with_columns(temporary=pl.lit(True))
+            .join(market_data, on="sample")
+            .filter(pl.col("outcome_share") <= maximum_share)
+            .sort("mde")
         )
 
     ranked = results.rank_designs(
@@ -288,16 +290,16 @@ def test_custom_ranking_can_join_filter_and_sort_without_mutating_results() -> N
         maximum_share=0.3,
     )
 
-    assert ranked["sample"].tolist() == ["second"]
-    assert best["sample"].tolist() == ["second"]
+    assert ranked.get_column("sample").to_list() == ["second"]
+    assert best.get_column("sample").to_list() == ["second"]
     assert "temporary" not in results.evaluated_designs(target_power=0.1)
 
 
 @pytest.mark.parametrize(
     ("ranking", "error", "message"),
     [
-        (lambda designs: [], TypeError, "pandas DataFrame"),
-        (lambda designs: designs.drop(columns="sample"), ValueError, "required columns"),
+        (lambda designs: [], TypeError, "Polars DataFrame"),
+        (lambda designs: designs.drop("sample"), ValueError, "required columns"),
     ],
 )
 def test_custom_ranking_contract_is_validated(ranking, error, message) -> None:
@@ -317,7 +319,7 @@ def test_custom_ranking_contract_is_validated(ranking, error, message) -> None:
 
 
 def test_geolift_ranking_uses_treatment_markets_to_break_ties(monkeypatch) -> None:
-    designs = pd.DataFrame(
+    designs = pl.DataFrame(
         {
             "sample": ["C", "D", "A", "B", "missing", "failed"],
             "treatment_markets": [("a",), ("a",), ("z",), ("b",), ("c",), ("d",)],
@@ -328,17 +330,17 @@ def test_geolift_ranking_uses_treatment_markets_to_break_ties(monkeypatch) -> No
             "n_failed": [0, 0, 0, 0, 0, 1],
         }
     )
-    results = GeoLiftPowerAnalysisResults({}, {}, pd.DataFrame(), "multiplicative")
+    results = GeoLiftPowerAnalysisResults({}, {}, pl.DataFrame(), "multiplicative")
     monkeypatch.setattr(
         GeoLiftPowerAnalysisResults,
         "evaluated_designs",
-        lambda self, **kwargs: designs.copy(deep=True),
+        lambda self, **kwargs: designs.clone(),
     )
 
     ranked = results.rank_designs()
 
-    assert ranked["sample"].tolist() == ["C", "D", "A", "B", "failed", "missing"]
-    assert ranked["rank"].tolist() == [1.0, 1.0, 1.0, 4.0, 5.0, 6.0]
+    assert ranked.get_column("sample").to_list() == ["C", "D", "A", "B", "failed", "missing"]
+    assert ranked.get_column("rank").to_list() == [1.0, 1.0, 1.0, 4.0, 5.0, 6.0]
 
 
 def test_explicit_treatment_pod_controls_effect_injection() -> None:
@@ -356,9 +358,9 @@ def test_explicit_treatment_pod_controls_effect_injection() -> None:
     simulations = results.as_df()
 
     assert results.get_power_results("candidate").params.treated == ("A",)
-    assert simulations.loc[0, "treatment_markets"] == ("A",)
-    assert simulations.loc[0, "donor_markets"] == ("B", "C")
-    assert simulations.loc[0, "treatment_pod"] == "pod_B"
+    assert simulations[0, "treatment_markets"].to_list() == ["A"]
+    assert simulations[0, "donor_markets"].to_list() == ["B", "C"]
+    assert simulations[0, "treatment_pod"] == "pod_B"
 
 
 def test_additive_effects_use_outcome_units_for_h1_calibration() -> None:
@@ -374,8 +376,8 @@ def test_additive_effects_use_outcome_units_for_h1_calibration() -> None:
         {"candidate": {"pod_A": ["A"], "pod_B": ["B", "C"]}},
     )
 
-    simulation = results.as_df(effect_size=5.0).iloc[0]
-    design = results.evaluated_designs(target_power=0.1).iloc[0]
+    simulation = results.as_df(effect_size=5.0).row(0, named=True)
+    design = results.evaluated_designs(target_power=0.1).row(0, named=True)
 
     assert simulation["injected_treated_post_total"] == pytest.approx(80.0)
     assert design["mde"] == 5.0
@@ -455,6 +457,8 @@ def test_constructor_and_assignment_contracts_fail_clearly() -> None:
         treatment_pod="pod_A",
         permutation_type="block",
     )
+    with pytest.raises(TypeError, match="Polars DataFrame"):
+        evaluator.evaluate([], {})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="exactly pod_A and pod_B"):
         evaluator.evaluate(make_panel(), {"candidate": {"pod_A": ["A"]}})
     with pytest.raises(ValueError, match="both pods"):

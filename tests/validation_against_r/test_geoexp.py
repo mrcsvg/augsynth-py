@@ -11,21 +11,23 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from augsynth_py import Synth
 from augsynth_py.geoexp import GeoLiftPowerAnalysis, MarketSelector
+from tests.validation_against_r._r_frames import from_r_data_frame, to_r_data_frame
 
 
-def _panel() -> pd.DataFrame:
+def _panel() -> pl.DataFrame:
     values = {
         "A": [1, 2, 4, 8, 7, 3],
         "B": [2, 3, 5, 7, 6, 5],
         "C": [4, 1, 3, 9, 2, 8],
         "D": [8, 2, 6, 1, 4, 0],
     }
-    return pd.DataFrame(
+    return pl.DataFrame(
         [
             {"time": time, "location": location, "Y": outcomes[time - 1]}
             for time in range(1, 7)
@@ -39,11 +41,8 @@ def test_market_selection_matches_geolift(r_session: Any) -> None:
     """Correlation-ranked treatment groups agree with GeoLift's selector."""
     panel = _panel()
     import rpy2.robjects as ro
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects.conversion import localconverter
 
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        ro.globalenv["market_panel"] = ro.conversion.py2rpy(panel)
+    ro.globalenv["market_panel"] = to_r_data_frame(panel)
 
     r_session(
         "similarity <- GeoLift::MarketSelection("
@@ -64,7 +63,10 @@ def test_market_selection_matches_geolift(r_session: Any) -> None:
 
     python_markets = {
         tuple(sorted(str(market).lower() for market in group))
-        for group in MarketSelector(market_counts=[2]).select(panel).as_df()["treatment_markets"]
+        for group in MarketSelector(market_counts=[2])
+        .select(panel)
+        .as_df()
+        .get_column("treatment_markets")
     }
     assert python_markets == r_markets
 
@@ -74,7 +76,7 @@ def test_power_analysis_wrapper_matches_geolift_power(
     r_session: Any,
 ) -> None:
     """The wrapper preserves GeoLift's per-window power-analysis outputs."""
-    panel = pd.DataFrame(
+    panel = pl.DataFrame(
         [
             {"time": time, "location": location, "Y": value}
             for location, values in {
@@ -86,12 +88,9 @@ def test_power_analysis_wrapper_matches_geolift_power(
         ]
     )
     import rpy2.robjects as ro
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects.conversion import localconverter
 
-    r_panel = panel.assign(location=panel["location"].str.lower())
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        ro.globalenv["power_panel"] = ro.conversion.py2rpy(r_panel)
+    r_panel = panel.with_columns(pl.col("location").str.to_lowercase())
+    ro.globalenv["power_panel"] = to_r_data_frame(r_panel)
     r_session(
         "r_power <- GeoLift::GeoLiftPower("
         "power_panel, locations = 'a', effect_size = c(0, 0.2), "
@@ -105,8 +104,7 @@ def test_power_analysis_wrapper_matches_geolift_power(
         "pvalue = r_power$pvalue, att = r_power$att_estimator, "
         "detected_lift = r_power$detected_lift)"
     )
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        r_frame = ro.conversion.rpy2py(r_session("r_power_frame"))
+    r_frame = from_r_data_frame(r_session("r_power_frame"))
 
     python_frame = (
         GeoLiftPowerAnalysis(
@@ -129,14 +127,12 @@ def test_power_analysis_wrapper_matches_geolift_power(
         "att",
         "detected_lift",
     ]
-    expected = pd.DataFrame(r_frame)
-    actual = python_frame[columns].sort_values(columns[:3]).reset_index(drop=True)
-    expected = expected[columns].sort_values(columns[:3]).reset_index(drop=True)
-    pd.testing.assert_frame_equal(
+    actual = python_frame.select(columns).sort(columns[:3])
+    expected = r_frame.select(columns).sort(columns[:3])
+    assert_frame_equal(
         actual,
         expected,
-        check_exact=False,
-        check_dtype=False,
-        rtol=1e-7,
-        atol=1e-7,
+        check_dtypes=False,
+        rel_tol=1e-7,
+        abs_tol=1e-7,
     )

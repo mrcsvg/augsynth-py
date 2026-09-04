@@ -42,6 +42,7 @@ import pytest
 
 from augsynth_py.power import simulate_power
 from augsynth_py.synth.classical import Synth
+from tests.validation_against_r._r_frames import from_r_data_frame
 
 TREATED = ["chicago", "portland"]
 DURATION = 15
@@ -52,10 +53,6 @@ ALPHA = 0.105  # tie-free for the p-value grids in play; see module docstring
 
 def _r_power_frame(r_session: Any) -> pl.DataFrame:
     """Run GeoLiftPower in R and return its result as a polars DataFrame."""
-    import rpy2.robjects as ro
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects.conversion import localconverter
-
     formals = set(r_session("names(formals(GeoLift::GeoLiftPower))"))
     needed = {"conformal_type", "side_of_test", "lookback_window"}
     missing = needed - formals
@@ -87,10 +84,7 @@ def _r_power_frame(r_session: Any) -> pl.DataFrame:
         "parallel = FALSE"
         ")"
     )
-    r_df = r_session("as.data.frame(gl_power)")
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        pandas_df = ro.conversion.rpy2py(r_df)
-    return _normalize_columns(pl.from_pandas(pandas_df))
+    return _normalize_columns(from_r_data_frame(r_session("as.data.frame(gl_power)")))
 
 
 def _normalize_columns(out: pl.DataFrame) -> pl.DataFrame:

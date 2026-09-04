@@ -57,7 +57,7 @@ relevant paper and equation in docstrings.
 | Language             | Python 3.11+                      | Practical adoption, scientific ecosystem               |
 | Numerics             | `numpy`, `scipy`                  | Native BLAS/LAPACK, stable APIs                        |
 | Convex optimization  | `cvxpy` (OSQP / Clarabel backends)| Cleanest expression of constrained QPs                 |
-| Tabular data         | `polars` for estimator panels; `pandas` for geoexp orchestration | Polars keeps the estimator core lean; pandas matches the GeoLift-shaped result API |
+| Tabular data         | `polars`                         | One dataframe API across estimators and geo-experiment helpers |
 | Parallelism          | `joblib`                          | Power analysis is embarrassingly parallel              |
 | Build backend        | `hatchling`                       | Modern, simple, PEP 621 native                         |
 | Layout               | `src/` layout                     | Avoids accidental imports during testing               |
@@ -109,8 +109,8 @@ power/MDE for a treated set that the caller already fixed.
 
 The `augsynth_py.geoexp` layer answers **which candidate assignment should be
 evaluated?** It uses the core public API to select candidate treatment groups
-and evaluate them. It accepts pandas panels because its GeoLift-shaped result
-API is table-oriented. It does not depend on measurement-lib.
+and evaluate them. It accepts Polars panels and returns Polars result tables.
+It does not depend on measurement-lib.
 
 Keep budgeting, ROI, cost-per-incremental-conversion, multi-cell design, and
 reporting outside this layer until those contracts are defined.
