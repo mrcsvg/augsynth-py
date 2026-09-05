@@ -291,6 +291,105 @@ def build_real_panel() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Probe — which candidate URLs actually serve a file?
+# ---------------------------------------------------------------------------
+
+# gov.br filenames are inconsistent across editions, and the Plone CMS answers
+# 200-with-an-HTML-page for a missing file rather than 404. So probe by magic
+# number, not by status code: ZIP starts with "PK", legacy .xls (OLE2) with
+# D0 CF 11 E0, .xlsx is a ZIP too, PDF with "%PDF".
+PROBE_URLS: list[tuple[str, str]] = [
+    (f"{GOVBR}/arquivos/tabelas-aeat-2009.zip", "tabelas AEAT 2009 (anos 2007-2009)"),
+    (f"{GOVBR}/arquivos/tabelas-aeat-2010.zip", "tabelas AEAT 2010 (anos 2008-2010)"),
+    (f"{GOVBR}/arquivos/tabelas-aeat-2011.zip", "tabelas AEAT 2011 (anos 2009-2011)"),
+    (f"{GOVBR}/arquivos/aeat_tabelas_2013.zip", "tabelas AEAT 2013 (anos 2011-2013)"),
+    (f"{GOVBR}/arquivos/aeat2014_tabelas.zip", "tabelas AEAT 2014 (anos 2012-2014)"),
+    (f"{GOVBR}/arquivos/aeat15tab.zip", "tabelas AEAT 2015 (anos 2013-2015)"),
+    (f"{GOVBR}/arquivos/aeat-2016.zip", "tabelas AEAT 2016 (anos 2014-2016)"),
+    (f"{GOVBR}/arquivos/aeat-2017.zip", "tabelas AEAT 2017 (anos 2015-2017)"),
+    (f"{GOVBR}/arquivos/aeat-2018_tabelas-v2.zip", "tabelas AEAT 2018 (anos 2016-2018)"),
+    (f"{GOVBR}/arquivos/aeat-2019_def.zip", "tabelas AEAT 2019 (anos 2017-2019)"),
+    (f"{GOVBR}/arquivos/aeat-2012.pdf", "PDF AEAT 2012 (fallback p/ 2010-2012)"),
+    (
+        "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/29a_01.xls",
+        "tabela 29.1 solta, edição 2012 (óbitos x CNAE, 2010-2012)",
+    ),
+    (
+        "https://www.gov.br/previdencia/pt-br/outros/imagens/2015/01/29a_01.xls",
+        "tabela 29.1 solta, edição 2013 (óbitos x CNAE, 2011-2013)",
+    ),
+    (
+        "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/59a_02.xls",
+        "tabela 59.2 solta, edição 2012 (indicadores: taxa de mortalidade x CNAE)",
+    ),
+    (
+        f"{GOVBR}/arquivos/aeat-1999_controle-negativo.zip",
+        "CONTROLE NEGATIVO — deve falhar; se 'ok', o probe não discrimina",
+    ),
+]
+
+_MAGIC: list[tuple[bytes, str]] = [
+    (b"PK\x03\x04", "zip/xlsx"),
+    (b"\xd0\xcf\x11\xe0", "xls (OLE2)"),
+    (b"%PDF", "pdf"),
+    (b"<!DOCTYPE", "HTML (pagina de erro)"),
+    (b"<html", "HTML (pagina de erro)"),
+]
+
+
+def probe_urls() -> None:
+    """Report which candidate AEAT URLs actually serve a binary file.
+
+    Fetches only the first bytes of each URL (HTTP Range), so it is cheap and
+    safe to re-run. Prints one line per URL: veredito, tipo detectado, tamanho
+    declarado e URL final (após redirecionamentos).
+    """
+    import urllib.error
+
+    print(f"Testando {len(PROBE_URLS)} URLs (só os primeiros bytes de cada)...\n")
+    ok, bad = [], []
+    for url, label in PROBE_URLS:
+        req = Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (augsynth-py/aeat-probe)",
+                "Range": "bytes=0-2047",
+            },
+        )
+        try:
+            with urlopen(req, timeout=60) as resp:
+                head = resp.read(2048)
+                status = resp.status
+                ctype = resp.headers.get("Content-Type", "?").split(";")[0]
+                clen = resp.headers.get("Content-Range") or resp.headers.get("Content-Length", "?")
+                final = resp.url
+        except urllib.error.HTTPError as exc:
+            print(f"  [FALHA {exc.code}] {label}\n      {url}")
+            bad.append(url)
+            continue
+        except Exception as exc:
+            print(f"  [ERRO REDE] {label}: {type(exc).__name__}: {exc}\n      {url}")
+            bad.append(url)
+            continue
+
+        kind = next((name for magic, name in _MAGIC if head.startswith(magic)), None)
+        is_file = kind is not None and "HTML" not in kind
+        veredito = "OK   " if is_file else "NAO  "
+        (ok if is_file else bad).append(url)
+        print(
+            f"  [{veredito}] {label}\n"
+            f"      tipo={kind or 'desconhecido'} http={status} ctype={ctype} tam={clen}\n"
+            f"      {final}"
+        )
+
+    print(f"\nResumo: {len(ok)} servindo arquivo, {len(bad)} falhando.")
+    print(
+        "Se o CONTROLE NEGATIVO apareceu como OK, o servidor está devolvendo algo\n"
+        "para qualquer caminho e os demais vereditos não valem — investigue à mão."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Demo panel — simulated, clearly labeled, with known injected effect
 # ---------------------------------------------------------------------------
 
@@ -407,8 +506,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--demo", action="store_true", help="gera o painel simulado de demonstração"
     )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="testa quais URLs do AEAT servem arquivo de verdade (não baixa nada)",
+    )
     args = parser.parse_args()
-    if args.demo:
+    if args.probe:
+        probe_urls()
+    elif args.demo:
         build_demo_panel()
     else:
         try:
