@@ -19,22 +19,35 @@ Two modes:
     runs end-to-end and the estimators can be checked against ground truth.
     The demo numbers are NOT real AEAT data and must never be quoted as such.
 
-Provenance of the real pipeline (all URLs verified 2026-08-24; see also
+``python notebooks/_fetch_aeat_nr35.py --probe``
+    Reports which candidate AEAT URLs actually serve a file. Run this first
+    when something 404s: gov.br renames the bundles between editions.
+
+Provenance of the real pipeline (URLs probed 2026-09-05; see also
 ``_data/README-aeat.md``):
 
 * Índice das edições: https://www.gov.br/previdencia/pt-br/assuntos/previdencia-social/saude-e-seguranca-do-trabalhador/acidente_trabalho_incapacidade
-* Each edition publishes the reference year and the two previous ones, so the
-  four editions 2010/2013/2016/2019 cover 2008-2019 with the most-revised
-  figures for every year.
-* Óbitos: Seção I, Subseção B — "Quantidade de acidentes do trabalho
-  liquidados, por consequência, segundo a CNAE" (Brasil). Rows are CNAE 2.0
-  *classes* (4 digits) + TOTAL + Ignorado; columns are 6 consequence groups
-  (Total, Assistência Médica, <15 dias, >15 dias, Incapacidade Permanente,
-  Óbito) × 3 years. Classes are aggregated here to divisões (2 digits).
-* Vínculos (denominator): the AEAT publishes "número médio anual de vínculos"
-  por CNAE from the 2009 edition onward; in editions where the workbook
-  cannot be located this script raises with a pointer to RAIS as the
-  alternative denominator.
+* Óbitos: Seção I, Subseção B, table 29.1 — "Quantidade de acidentes do
+  trabalho liquidados, por consequência, segundo a CNAE" (Brasil). Rows are
+  CNAE 2.0 *classes* (4 digits) + TOTAL + Ignorado; columns are 6 consequence
+  groups (Total, Assistência Médica, <15 dias, >15 dias, Incapacidade
+  Permanente, Óbito) × **3 years**. Classes are aggregated here to divisões.
+* Indicadores: Seção II, chapter 59 (Brasil) — includes "Taxa de Mortalidade
+  (por 100.000 vínculos)" and "Incidência (por 1.000 vínculos)", by CNAE
+  class, for **2 years** per edition (`59.1` = year before the edition,
+  `59.2` = the edition year).
+* Vínculos (denominator) are NOT published as a column in the 2008-2019
+  editions — that column only appears in recent ones (confirmed present in
+  2023, absent in 2019). Since rates cannot be aggregated from class to
+  divisão without weights, recover the weights the AEAT itself used:
+
+      vínculos_classe = acidentes_registrados_classe * 1000 / incidência_classe
+
+  Prefer this over inverting the mortality rate: accidents outnumber deaths by
+  two orders of magnitude, so the 2-decimal rounding of the published rate
+  costs far less precision, and few classes have a suppressed ("-") incidence.
+  Then sum óbitos and vínculos to the divisão before dividing. RAIS is the
+  external alternative if a class is suppressed.
 """
 
 from __future__ import annotations
@@ -57,30 +70,56 @@ GOVBR = (
     "saude-e-seguranca-do-trabalhador/acidente_trabalho_incapacidade"
 )
 
-# Four editions cover 2008-2019; each brings its reference year plus the two
-# previous ones, already revised. `zip_url` is the tables bundle; for editions
-# distributed as loose .xls files (2012-era site), `b_brasil_xls` points
-# straight at table 29.1 (Subseção B, Brasil × CNAE).
+# Tables ZIP per edition. All URLs below were probed on 2026-09-05 and serve a
+# real file (a deliberately wrong path in the same directory returns 404, so
+# the check discriminates). Note there is NO tables ZIP for the 2008 and 2012
+# editions — their "Tabelas" link points back at the edition's own HTML page —
+# but neither is needed: 2008 comes from the 2009/2010 editions and 2012 from
+# the 2013 edition.
+#
+# The two sections we need have DIFFERENT year spans per edition:
+#
+# * Seção I, Subseção B (óbitos por CNAE, table 29.1) — the edition year plus
+#   the TWO previous ones. Four editions therefore cover 2008-2019.
+# * Seção II (indicadores por CNAE, chapter 59 = Brasil) — only TWO years:
+#   table `59.1` is the year before the edition, `59.2` the edition year.
+#   Covering 2008-2019 takes SIX editions (the odd ones below).
+ZIP_URLS: dict[int, str] = {
+    2009: f"{GOVBR}/arquivos/tabelas-aeat-2009.zip",
+    2010: f"{GOVBR}/arquivos/tabelas-aeat-2010.zip",
+    2011: f"{GOVBR}/arquivos/tabelas-aeat-2011.zip",
+    2013: f"{GOVBR}/arquivos/aeat_tabelas_2013.zip",
+    2014: f"{GOVBR}/arquivos/aeat2014_tabelas.zip",
+    2015: f"{GOVBR}/arquivos/aeat15tab.zip",
+    2016: f"{GOVBR}/arquivos/aeat-2016.zip",
+    2017: f"{GOVBR}/arquivos/aeat-2017.zip",
+    2018: f"{GOVBR}/arquivos/aeat-2018_tabelas-v2.zip",
+    2019: f"{GOVBR}/arquivos/aeat-2019_def.zip",
+    2020: f"{GOVBR}/arquivos/aeat-2020.zip",
+}
+
+# Óbitos route: edition -> the three years its Subseção B table carries.
 EDITIONS: dict[int, dict[str, object]] = {
-    2010: {
-        "years": (2008, 2009, 2010),
-        "zip_url": f"{GOVBR}/arquivos/tabelas-aeat-2010.zip",
-    },
+    2010: {"years": (2008, 2009, 2010), "zip_url": ZIP_URLS[2010]},
     2013: {
         "years": (2011, 2012, 2013),
-        "zip_url": f"{GOVBR}/arquivos/aeat_tabelas_2013.zip",
-        # Fallback: loose files, schema confirmed for the 2013 edition site
-        # (tabelas-b-2013 -> /pt-br/outros/imagens/2015/01/29a_01.xls).
+        "zip_url": ZIP_URLS[2013],
+        # Fallback: the 2013 edition also serves its tables as loose files.
         "b_brasil_xls": "https://www.gov.br/previdencia/pt-br/outros/imagens/2015/01/29a_01.xls",
     },
-    2016: {
-        "years": (2014, 2015, 2016),
-        "zip_url": f"{GOVBR}/arquivos/aeat-2016.zip",
-    },
-    2019: {
-        "years": (2017, 2018, 2019),
-        "zip_url": f"{GOVBR}/arquivos/aeat-2019_def.zip",
-    },
+    2016: {"years": (2014, 2015, 2016), "zip_url": ZIP_URLS[2016]},
+    2019: {"years": (2017, 2018, 2019), "zip_url": ZIP_URLS[2019]},
+}
+
+# Indicators route: edition -> (year of table 59.1, year of table 59.2).
+# These six editions tile 2008-2019 without gaps or overlaps.
+INDICATOR_EDITIONS: dict[int, tuple[int, int]] = {
+    2009: (2008, 2009),
+    2011: (2010, 2011),
+    2013: (2012, 2013),
+    2015: (2014, 2015),
+    2017: (2016, 2017),
+    2019: (2018, 2019),
 }
 
 # CNAE 2.0 divisões (IBGE), short labels used as unit names in the panel.
@@ -277,16 +316,20 @@ def build_real_panel() -> None:
         totals = {yr: parsed.get(("TOTAL", yr)) for yr in years}  # type: ignore[union-attr]
         print(f"  TOTAL Brasil (óbitos): {totals}  <- confira contra o PDF da edição")
 
-    # Denominators: the AEAT "número médio anual de vínculos" workbooks are not
-    # yet wired here (locations vary per edition). Building the CSV without
-    # them would silently ship a count outcome where the notebook expects a
-    # rate — refuse instead, pointing at the alternatives.
+    # Denominator: the 2008-2019 editions do NOT publish a vínculos column, so
+    # it has to be recovered from the indicators tables (see module docstring).
+    # Building the CSV without it would silently ship a count outcome where the
+    # notebook expects a rate — refuse instead, with the recipe.
     raise NotImplementedError(
-        "Óbitos extraídos, mas o denominador (vínculos por divisão CNAE) ainda "
-        "não está plugado. Opções: (1) tabelas de vínculos do AEAT (edições "
-        ">=2009), (2) RAIS/vínculos por divisão (basedosdados: br_me_rais). "
-        "Complete _fetch_vinculos() e recalcule taxa = obitos/vinculos*1e5. "
-        f"Óbitos por (divisão, ano) já disponíveis em memória: {len(obitos)} células."
+        f"Óbitos extraídos ({len(obitos)} células (divisão, ano)), mas falta o "
+        "denominador de vínculos — sem ele isto vira contagem, não taxa.\n"
+        "Receita: abra o capítulo 59 (Brasil) da Seção II das 6 edições em "
+        f"INDICATOR_EDITIONS ({', '.join(map(str, INDICATOR_EDITIONS))}); cada "
+        "uma traz 2 anos (tabelas 59.1 e 59.2). Para cada classe CNAE, recupere "
+        "vinculos = acidentes_registrados * 1000 / incidencia (Subseção A x "
+        "Seção II), some óbitos e vínculos por divisão e só então divida:\n"
+        "    taxa = obitos_divisao / vinculos_divisao * 1e5\n"
+        "Classes com incidência suprimida ('-'): caia para a RAIS por divisão."
     )
 
 
@@ -294,39 +337,46 @@ def build_real_panel() -> None:
 # Probe — which candidate URLs actually serve a file?
 # ---------------------------------------------------------------------------
 
+
 # gov.br filenames are inconsistent across editions, and the Plone CMS answers
 # 200-with-an-HTML-page for a missing file rather than 404. So probe by magic
 # number, not by status code: ZIP starts with "PK", legacy .xls (OLE2) with
 # D0 CF 11 E0, .xlsx is a ZIP too, PDF with "%PDF".
-PROBE_URLS: list[tuple[str, str]] = [
-    (f"{GOVBR}/arquivos/tabelas-aeat-2009.zip", "tabelas AEAT 2009 (anos 2007-2009)"),
-    (f"{GOVBR}/arquivos/tabelas-aeat-2010.zip", "tabelas AEAT 2010 (anos 2008-2010)"),
-    (f"{GOVBR}/arquivos/tabelas-aeat-2011.zip", "tabelas AEAT 2011 (anos 2009-2011)"),
-    (f"{GOVBR}/arquivos/aeat_tabelas_2013.zip", "tabelas AEAT 2013 (anos 2011-2013)"),
-    (f"{GOVBR}/arquivos/aeat2014_tabelas.zip", "tabelas AEAT 2014 (anos 2012-2014)"),
-    (f"{GOVBR}/arquivos/aeat15tab.zip", "tabelas AEAT 2015 (anos 2013-2015)"),
-    (f"{GOVBR}/arquivos/aeat-2016.zip", "tabelas AEAT 2016 (anos 2014-2016)"),
-    (f"{GOVBR}/arquivos/aeat-2017.zip", "tabelas AEAT 2017 (anos 2015-2017)"),
-    (f"{GOVBR}/arquivos/aeat-2018_tabelas-v2.zip", "tabelas AEAT 2018 (anos 2016-2018)"),
-    (f"{GOVBR}/arquivos/aeat-2019_def.zip", "tabelas AEAT 2019 (anos 2017-2019)"),
-    (f"{GOVBR}/arquivos/aeat-2012.pdf", "PDF AEAT 2012 (fallback p/ 2010-2012)"),
-    (
-        "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/29a_01.xls",
-        "tabela 29.1 solta, edição 2012 (óbitos x CNAE, 2010-2012)",
-    ),
-    (
-        "https://www.gov.br/previdencia/pt-br/outros/imagens/2015/01/29a_01.xls",
-        "tabela 29.1 solta, edição 2013 (óbitos x CNAE, 2011-2013)",
-    ),
-    (
-        "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/59a_02.xls",
-        "tabela 59.2 solta, edição 2012 (indicadores: taxa de mortalidade x CNAE)",
-    ),
-    (
-        f"{GOVBR}/arquivos/aeat-1999_controle-negativo.zip",
-        "CONTROLE NEGATIVO — deve falhar; se 'ok', o probe não discrimina",
-    ),
-]
+def _probe_urls() -> list[tuple[str, str]]:
+    """Candidate URLs to probe, with a human label for each."""
+    items: list[tuple[str, str]] = []
+    for ed, url in sorted(ZIP_URLS.items()):
+        roles = []
+        if ed in EDITIONS:
+            yrs = EDITIONS[ed]["years"]  # type: ignore[index]
+            roles.append(f"óbitos {yrs[0]}-{yrs[2]}")  # type: ignore[index]
+        if ed in INDICATOR_EDITIONS:
+            a, b = INDICATOR_EDITIONS[ed]
+            roles.append(f"indicadores {a}+{b}")
+        items.append((url, f"tabelas AEAT {ed}" + (f" [{'; '.join(roles)}]" if roles else "")))
+    items += [
+        (f"{GOVBR}/arquivos/aeat-2012.pdf", "PDF AEAT 2012 (fallback; sem ZIP nesta edição)"),
+        (
+            "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/29a_01.xls",
+            "tabela 29.1 solta, edição 2012 (óbitos x CNAE, 2010-2012)",
+        ),
+        (
+            "https://www.gov.br/previdencia/pt-br/outros/imagens/2015/01/29a_01.xls",
+            "tabela 29.1 solta, edição 2013 (óbitos x CNAE, 2011-2013)",
+        ),
+        (
+            "https://www.gov.br/previdencia/pt-br/outros/imagens/2014/01/59a_02.xls",
+            "tabela 59.2 solta, edição 2012 (indicadores: taxa de mortalidade x CNAE)",
+        ),
+        (
+            f"{GOVBR}/arquivos/aeat-1999_controle-negativo.zip",
+            "CONTROLE NEGATIVO — deve falhar; se 'OK', o probe não discrimina",
+        ),
+    ]
+    return items
+
+
+PROBE_URLS: list[tuple[str, str]] = _probe_urls()
 
 _MAGIC: list[tuple[bytes, str]] = [
     (b"PK\x03\x04", "zip/xlsx"),
