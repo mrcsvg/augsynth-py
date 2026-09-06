@@ -257,6 +257,39 @@ def _find_subsecao_b_brasil(zf: zipfile.ZipFile) -> str:
     )
 
 
+# Óbito is the last of the six consequence groups, so its three year-columns
+# sit at 0-indexed 16, 17 and 18 of a 19-column table. Verified identical in
+# the 2010, 2013, 2016 and 2019 editions; only the header ROW moves (7 vs 6).
+# Addressing the column by position beats collecting the numeric cells and
+# taking the last three: the 2019 edition writes suppressed values as "-", and
+# that approach silently dropped 448 rows (250 deaths in 2017 alone).
+OBITO_COL = 16
+
+
+def _cell_to_count(value: object) -> int | None:
+    """Coerce one AEAT count cell to an int, or None when it is not a count.
+
+    Blank cells and the "-" placeholder mean zero (suppressed or no cases).
+    Returns None for anything unrecognized so the caller can skip the row
+    rather than invent a number.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        text = value.strip()
+        if text in {"-", "", "..", "...", "nan"}:
+            return 0
+        try:
+            return int(float(text.replace(".", "").replace(",", ".")))
+        except ValueError:
+            return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return 0 if value != value else int(value)  # NaN -> 0
+    return None
+
+
 def _parse_subsecao_b(xls_bytes: bytes, years: tuple[int, int, int]) -> dict[tuple[str, int], int]:
     """Parse óbitos by CNAE class from a Subseção B workbook, per year.
 
@@ -268,26 +301,66 @@ def _parse_subsecao_b(xls_bytes: bytes, years: tuple[int, int, int]) -> dict[tup
     """
     import pandas as pd
 
-    df = pd.read_excel(io.BytesIO(xls_bytes), header=None)
+    # The table is paginated across sheets in recent editions (the 2019
+    # workbook splits table 29.1 over 10 sheets, "19Act29_01" .. "19Act29_01
+    # 10", with TOTAL on the first and Ignorado on the last), while older .xls
+    # editions carry a single sheet. Read them all: on a one-sheet workbook
+    # this is a no-op, and on a paginated one it is the difference between
+    # 669 CNAE classes and only the first 68.
+    workbook = pd.ExcelFile(io.BytesIO(xls_bytes))
     out: dict[tuple[str, int], int] = {}
-    for _, row in df.iterrows():
+    rows = (
+        row
+        for sheet in workbook.sheet_names
+        for _, row in workbook.parse(sheet, header=None).iterrows()
+    )
+    for row in rows:
         cells = row.tolist()
         label = str(cells[0]).strip()
-        numeric = [c for c in cells[1:] if isinstance(c, (int, float)) and c == c]
-        if len(numeric) < 18:
-            continue
-        obito_cols = numeric[-3:]
         if re.fullmatch(r"\d{4}", label):
             key = label[:2]
         elif label.upper().startswith("TOTAL"):
             key = "TOTAL"
+        elif label.upper().startswith("IGNORADO"):
+            # Deaths whose CNAE was not informed. Not a division, but needed to
+            # reconcile against TOTAL below.
+            key = "IGNORADO"
         else:
+            continue
+        if len(cells) <= OBITO_COL + 2:
+            continue
+        obito_cols = [_cell_to_count(cells[OBITO_COL + i]) for i in range(3)]
+        if any(v is None for v in obito_cols):
             continue
         for yr, val in zip(years, obito_cols, strict=True):
             out[(key, yr)] = out.get((key, yr), 0) + int(val)
     if not out:
         raise ValueError("Nenhuma linha CNAE reconhecida — layout mudou; inspecione o workbook.")
+    _reconcile(out, years)
     return out
+
+
+def _reconcile(out: dict[tuple[str, int], int], years: tuple[int, int, int]) -> None:
+    """Check that the parsed divisions add back up to the published TOTAL.
+
+    ``TOTAL == sum(divisões) + Ignorado`` holds exactly in the AEAT tables
+    (verified on the 2013 edition: 2938 = 2897 + 41 for 2011, and likewise for
+    2012 and 2013). If it ever fails, the column offsets are wrong for this
+    edition — a silent off-by-one would otherwise ship plausible but wrong
+    numbers, which is worse than crashing.
+    """
+    divisions = {d for d, _ in out} - {"TOTAL", "IGNORADO"}
+    for yr in years:
+        total = out.get(("TOTAL", yr))
+        if total is None:
+            raise ValueError(f"Linha TOTAL ausente para {yr} — layout inesperado.")
+        got = sum(out.get((d, yr), 0) for d in divisions) + out.get(("IGNORADO", yr), 0)
+        if got != total:
+            raise ValueError(
+                f"Reconciliação falhou em {yr}: soma das divisões + Ignorado = {got}, "
+                f"mas a tabela publica TOTAL = {total} (diferença {total - got}). "
+                "As colunas de Óbito provavelmente não são as 3 últimas nesta edição."
+            )
 
 
 def build_real_panel() -> None:
