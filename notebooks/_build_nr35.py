@@ -554,7 +554,13 @@ CELLS.append(
     ax.legend(loc="best")
     plt.tight_layout(); plt.show()
 
-    if best_idx in (0, len(grid) - 1):
+    if best_idx == 0 and aug.rmspe_pre_ < 1e-3:
+        print(f"λ no piso da grade ({grid.min():.0e}) — mas aqui isso NÃO é grade estreita:")
+        print(f"  a ridge fecha o pré exatamente (RMSPE {aug.rmspe_pre_ * 100:.2f}%), então não há")
+        print("  resíduo para ela corrigir e o CV persegue λ→0 corretamente. Alargar a grade")
+        print("  não muda nada; o que o CV diz é que, com 5 períodos de pré e mais doadores")
+        print("  do que isso, a augmentação não tem trabalho a fazer.")
+    elif best_idx in (0, len(grid) - 1):
         print("⚠️  λ na borda da grade — alargar lambda_grid antes de confiar no CV.")
 """)
 )
