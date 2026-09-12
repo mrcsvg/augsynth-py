@@ -1,0 +1,229 @@
+setor,ano,taxa_mortalidade,obitos,vinculos
+A Agropecuária,2008,12.9627,200,1542893
+A Agropecuária,2009,12.5383,187,1491434
+A Agropecuária,2010,11.6346,178,1529924
+A Agropecuária,2011,12.0296,187,1554493
+A Agropecuária,2012,10.3769,165,1590070
+A Agropecuária,2013,11.4613,178,1553051
+A Agropecuária,2014,21.0509,197,935826
+A Agropecuária,2015,11.0328,165,1495537
+A Agropecuária,2016,10.0729,158,1568563
+A Agropecuária,2017,10.2686,162,1577618
+A Agropecuária,2018,10.2665,161,1568208
+A Agropecuária,2019,9.9257,156,1571684
+B Indústrias extrativas,2008,29.4863,52,176353
+B Indústrias extrativas,2009,24.2854,44,181179
+B Indústrias extrativas,2010,24.5273,49,199778
+B Indústrias extrativas,2011,19.3306,43,222445
+B Indústrias extrativas,2012,22.2219,54,243004
+B Indústrias extrativas,2013,24.3775,62,254333
+B Indústrias extrativas,2014,21.5136,56,260300
+B Indústrias extrativas,2015,21.1059,51,241639
+B Indústrias extrativas,2016,10.3884,23,221401
+B Indústrias extrativas,2017,14.7216,31,210575
+B Indústrias extrativas,2018,14.901,31,208039
+B Indústrias extrativas,2019,105.2226,226,214783
+C Indústrias de transformação,2008,9.7858,669,6836452
+C Indústrias de transformação,2009,8.2105,548,6674384
+C Indústrias de transformação,2010,9.0724,656,7230738
+C Indústrias de transformação,2011,8.3523,640,7662520
+C Indústrias de transformação,2012,8.599,675,7849768
+C Indústrias de transformação,2013,8.2774,659,7961403
+C Indústrias de transformação,2014,7.2851,584,8016333
+C Indústrias de transformação,2015,6.8886,526,7635790
+C Indústrias de transformação,2016,7.1188,497,6981513
+C Indústrias de transformação,2017,6.3165,431,6823417
+C Indústrias de transformação,2018,6.5098,440,6759003
+C Indústrias de transformação,2019,5.9062,406,6874165
+Construção,2008,19.7643,384,1942899
+Construção,2009,18.5779,395,2126177
+Construção,2010,17.4825,456,2608320
+Construção,2011,16.1914,471,2908947
+Construção,2012,13.9748,456,3263025
+Construção,2013,13.5403,451,3330802
+Construção,2014,14.74,453,3073275
+Construção,2015,11.7534,333,2833228
+Construção,2016,12.28,284,2312710
+Construção,2017,11.5302,227,1968748
+Construção,2018,14.0918,266,1887622
+Construção,2019,11.7054,214,1828222
+D Eletricidade e gás,2008,22.5364,26,115369
+D Eletricidade e gás,2009,11.0578,13,117564
+D Eletricidade e gás,2010,13.1418,15,114140
+D Eletricidade e gás,2011,27.2583,32,117396
+D Eletricidade e gás,2012,9.8325,12,122045
+D Eletricidade e gás,2013,22.5065,27,119965
+D Eletricidade e gás,2014,21.4461,19,88594
+D Eletricidade e gás,2015,20.9515,27,128869
+D Eletricidade e gás,2016,12.2646,16,130457
+D Eletricidade e gás,2017,15.5729,20,128428
+D Eletricidade e gás,2018,12.8164,16,124840
+D Eletricidade e gás,2019,8.1909,10,122086
+"E Água, esgoto e resíduos",2008,13.6755,35,255932
+"E Água, esgoto e resíduos",2009,14.6968,38,258560
+"E Água, esgoto e resíduos",2010,15.7485,43,273042
+"E Água, esgoto e resíduos",2011,17.9906,52,289040
+"E Água, esgoto e resíduos",2012,13.61,42,308597
+"E Água, esgoto e resíduos",2013,14.621,47,321455
+"E Água, esgoto e resíduos",2014,17.1131,58,338922
+"E Água, esgoto e resíduos",2015,12.4471,41,329393
+"E Água, esgoto e resíduos",2016,9.0576,29,320174
+"E Água, esgoto e resíduos",2017,10.9092,34,311665
+"E Água, esgoto e resíduos",2018,14.4219,45,312025
+"E Água, esgoto e resíduos",2019,15.1123,50,330857
+G Comércio e reparação,2008,6.6389,461,6943955
+G Comércio e reparação,2009,5.8698,429,7308657
+G Comércio e reparação,2010,5.8503,454,7760319
+G Comércio e reparação,2011,5.1647,434,8403264
+G Comércio e reparação,2012,4.2531,375,8817082
+G Comércio e reparação,2013,4.4935,411,9146593
+G Comércio e reparação,2014,4.7438,450,9486082
+G Comércio e reparação,2015,4.2645,400,9379760
+G Comércio e reparação,2016,4.0898,369,9022527
+G Comércio e reparação,2017,3.856,342,8869351
+G Comércio e reparação,2018,4.1483,365,8798887
+G Comércio e reparação,2019,3.4688,313,9023348
+H Transporte e armazenagem,2008,24.8342,436,1755642
+H Transporte e armazenagem,2009,20.7336,379,1827947
+H Transporte e armazenagem,2010,21.221,425,2002733
+H Transporte e armazenagem,2011,22.887,500,2184649
+H Transporte e armazenagem,2012,19.0085,452,2377879
+H Transporte e armazenagem,2013,17.814,437,2453120
+H Transporte e armazenagem,2014,18.0703,458,2534542
+H Transporte e armazenagem,2015,17.6967,440,2486339
+H Transporte e armazenagem,2016,16.371,386,2357824
+H Transporte e armazenagem,2017,15.5016,353,2277179
+H Transporte e armazenagem,2018,14.7022,332,2258164
+H Transporte e armazenagem,2019,14.9523,350,2340784
+I Alojamento e alimentação,2008,3.959,49,1237698
+I Alojamento e alimentação,2009,2.8676,38,1325140
+I Alojamento e alimentação,2010,2.6321,38,1443702
+I Alojamento e alimentação,2011,2.8459,45,1581210
+I Alojamento e alimentação,2012,2.6913,46,1709218
+I Alojamento e alimentação,2013,2.6102,47,1800646
+I Alojamento e alimentação,2014,2.2708,44,1937621
+I Alojamento e alimentação,2015,2.1568,42,1947287
+I Alojamento e alimentação,2016,2.3491,44,1873095
+I Alojamento e alimentação,2017,2.9062,54,1858098
+I Alojamento e alimentação,2018,2.5985,48,1847246
+I Alojamento e alimentação,2019,3.4962,67,1916388
+J Informação e comunicação,2008,4.7417,29,611599
+J Informação e comunicação,2009,2.9524,19,643552
+J Informação e comunicação,2010,2.7079,19,701640
+J Informação e comunicação,2011,4.4519,34,763722
+J Informação e comunicação,2012,3.9955,33,825927
+J Informação e comunicação,2013,2.9433,25,849396
+J Informação e comunicação,2014,3.674,30,816545
+J Informação e comunicação,2015,2.1145,18,851251
+J Informação e comunicação,2016,3.6583,30,820055
+J Informação e comunicação,2017,3.2036,26,811577
+J Informação e comunicação,2018,3.894,33,847461
+J Informação e comunicação,2019,2.4166,22,910364
+K Financeiras e seguros,2008,2.0632,15,727039
+K Financeiras e seguros,2009,2.6238,19,724144
+K Financeiras e seguros,2010,2.2664,17,750082
+K Financeiras e seguros,2011,3.5349,28,792102
+K Financeiras e seguros,2012,3.1924,26,814428
+K Financeiras e seguros,2013,2.9212,24,821568
+K Financeiras e seguros,2014,2.4709,22,890356
+K Financeiras e seguros,2015,2.8984,26,897046
+K Financeiras e seguros,2016,2.132,19,891201
+K Financeiras e seguros,2017,1.8319,16,873411
+K Financeiras e seguros,2018,2.5099,22,876513
+K Financeiras e seguros,2019,1.2936,12,927679
+L Atividades imobiliárias,2008,7.5031,6,79967
+L Atividades imobiliárias,2009,8.4183,7,83152
+L Atividades imobiliárias,2010,4.2304,4,94553
+L Atividades imobiliárias,2011,5.8085,6,103297
+L Atividades imobiliárias,2012,4.987,6,120314
+L Atividades imobiliárias,2013,8.7593,11,125580
+L Atividades imobiliárias,2014,11.607,17,146464
+L Atividades imobiliárias,2015,5.134,8,155824
+L Atividades imobiliárias,2016,5.8709,9,153299
+L Atividades imobiliárias,2017,7.4539,11,147574
+L Atividades imobiliárias,2018,2.5371,4,157660
+L Atividades imobiliárias,2019,5.9908,10,166923
+M Profissionais e técnicas,2008,6.5467,43,656816
+M Profissionais e técnicas,2009,6.4628,47,727243
+M Profissionais e técnicas,2010,4.2949,37,861483
+M Profissionais e técnicas,2011,5.4792,52,949039
+M Profissionais e técnicas,2012,5.6231,58,1031451
+M Profissionais e técnicas,2013,4.8632,51,1048702
+M Profissionais e técnicas,2014,4.6707,51,1091904
+M Profissionais e técnicas,2015,4.3781,48,1096375
+M Profissionais e técnicas,2016,3.3448,35,1046396
+M Profissionais e técnicas,2017,3.3283,34,1021535
+M Profissionais e técnicas,2018,3.5188,38,1079924
+M Profissionais e técnicas,2019,3.5841,41,1143954
+N Administrativas e apoio,2008,6.554,198,3021051
+N Administrativas e apoio,2009,4.8549,152,3130871
+N Administrativas e apoio,2010,4.7818,168,3513304
+N Administrativas e apoio,2011,4.5115,172,3812498
+N Administrativas e apoio,2012,4.5145,189,4186495
+N Administrativas e apoio,2013,4.5594,197,4320755
+N Administrativas e apoio,2014,4.3556,195,4477010
+N Administrativas e apoio,2015,4.5722,203,4439889
+N Administrativas e apoio,2016,3.8773,165,4255558
+N Administrativas e apoio,2017,3.5559,148,4162091
+N Administrativas e apoio,2018,3.7149,159,4280100
+N Administrativas e apoio,2019,3.3051,148,4477965
+O Administração pública,2008,1.5158,49,3232593
+O Administração pública,2009,1.6248,53,3261864
+O Administração pública,2010,1.7007,59,3469164
+O Administração pública,2011,1.567,53,3382176
+O Administração pública,2012,1.2156,46,3783992
+O Administração pública,2013,1.5507,56,3611388
+O Administração pública,2014,1.1953,45,3764891
+O Administração pública,2015,1.3035,47,3605626
+O Administração pública,2016,1.0145,38,3745627
+O Administração pública,2017,1.6137,58,3594271
+O Administração pública,2018,1.2337,44,3566535
+O Administração pública,2019,1.2773,46,3601385
+P Educação,2008,1.2232,14,1144502
+P Educação,2009,1.2436,15,1206165
+P Educação,2010,1.4818,20,1349707
+P Educação,2011,1.6022,23,1435497
+P Educação,2012,1.456,23,1579724
+P Educação,2013,1.5543,26,1672824
+P Educação,2014,1.3327,24,1800802
+P Educação,2015,0.8459,16,1891550
+P Educação,2016,0.8925,17,1904827
+P Educação,2017,1.2217,23,1882548
+P Educação,2018,1.1611,23,1980930
+P Educação,2019,0.7807,16,2049449
+Q Saúde e serviço social,2008,2.3242,30,1290743
+Q Saúde e serviço social,2009,1.5139,21,1387143
+Q Saúde e serviço social,2010,1.9727,30,1520771
+Q Saúde e serviço social,2011,1.53,25,1633956
+Q Saúde e serviço social,2012,1.4891,27,1813208
+Q Saúde e serviço social,2013,1.469,28,1906072
+Q Saúde e serviço social,2014,1.5982,32,2002272
+Q Saúde e serviço social,2015,1.4134,30,2122561
+Q Saúde e serviço social,2016,1.8575,40,2153375
+Q Saúde e serviço social,2017,1.7739,39,2198558
+Q Saúde e serviço social,2018,1.3457,31,2303677
+Q Saúde e serviço social,2019,1.107,27,2438947
+"R Artes, esporte e recreação",2008,4.2173,7,165982
+"R Artes, esporte e recreação",2009,4.0251,7,173910
+"R Artes, esporte e recreação",2010,3.7672,7,185815
+"R Artes, esporte e recreação",2011,4.0313,8,198449
+"R Artes, esporte e recreação",2012,4.6042,10,217194
+"R Artes, esporte e recreação",2013,1.3075,3,229443
+"R Artes, esporte e recreação",2014,3.244,8,246609
+"R Artes, esporte e recreação",2015,4.3173,11,254786
+"R Artes, esporte e recreação",2016,16.9115,43,254265
+"R Artes, esporte e recreação",2017,4.02,10,248759
+"R Artes, esporte e recreação",2018,2.0068,5,249149
+"R Artes, esporte e recreação",2019,3.8834,10,257507
+S Outros serviços,2008,4.2845,44,1026948
+S Outros serviços,2009,3.021,32,1059235
+S Outros serviços,2010,3.5957,38,1056828
+S Outros serviços,2011,3.3529,37,1103521
+S Outros serviços,2012,3.7265,41,1100232
+S Outros serviços,2013,2.26,25,1106197
+S Outros serviços,2014,2.8138,30,1066166
+S Outros serviços,2015,2.5023,27,1079022
+S Outros serviços,2016,2.327,24,1031353
+S Outros serviços,2017,2.6994,27,1000223
+S Outros serviços,2018,2.7762,27,972551
+S Outros serviços,2019,2.0683,20,967001

@@ -53,9 +53,11 @@ Provenance of the real pipeline (URLs probed 2026-09-05; see also
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -223,10 +225,36 @@ CNAE_DIVISOES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+# The AEAT bundles are 5-13 MB each and gov.br drops connections mid-transfer
+# often enough to matter (a run died with IncompleteRead after 1.4 of 13 MB).
+# Cache them outside the repo so a re-run costs nothing and a flaky download
+# does not restart the whole pipeline.
+DOWNLOAD_CACHE = Path(tempfile.gettempdir()) / "augsynth-aeat-cache"
+DOWNLOAD_ATTEMPTS = 3
+
+
 def _download(url: str) -> bytes:
-    req = Request(url, headers={"User-Agent": "augsynth-py/aeat-fetch"})
-    with urlopen(req, timeout=180) as resp:
-        return resp.read()
+    """Fetch a URL, with an on-disk cache and retries on truncated responses."""
+    DOWNLOAD_CACHE.mkdir(parents=True, exist_ok=True)
+    cached = DOWNLOAD_CACHE / hashlib.sha256(url.encode()).hexdigest()[:16]
+    if cached.exists() and cached.stat().st_size > 0:
+        return cached.read_bytes()
+
+    last: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            req = Request(url, headers={"User-Agent": "augsynth-py/aeat-fetch"})
+            with urlopen(req, timeout=300) as resp:
+                blob = resp.read()
+            declared = resp.headers.get("Content-Length")
+            if declared and len(blob) != int(declared):
+                raise OSError(f"download truncado: {len(blob)} de {declared} bytes")
+            cached.write_bytes(blob)
+            return blob
+        except Exception as exc:
+            last = exc
+            print(f"    tentativa {attempt}/{DOWNLOAD_ATTEMPTS} falhou ({exc}); repetindo...")
+    raise RuntimeError(f"Falha ao baixar {url} após {DOWNLOAD_ATTEMPTS} tentativas: {last}")
 
 
 def _find_subsecao_b_brasil(zf: zipfile.ZipFile) -> str:
@@ -373,6 +401,41 @@ TAXA_MORT_COL = 5  # chapter 59: "Taxa de Mortalidade (por 100.000 vínculos)"
 # wildly when one death lands in it).
 CONSTRUCAO = ("41", "42", "43")
 MIN_VINCULOS = 50_000
+
+# CNAE 2.0 sections, as ranges of divisions. The panel is also published at
+# this level because the division panel cannot identify a synthetic control:
+# with 68 donors and only 5 pre-treatment years the simplex QP interpolates the
+# pre-period exactly (RMSPE 2e-09) and the ATT swings from -0.4 to -9.5 when a
+# single donor is dropped. Aggregating to sections dilutes the extreme
+# divisions, puts the treated unit outside the donor convex hull, and leaves a
+# real pre-period residual (RMSPE 5.7%) for the estimator to work against.
+SECOES: dict[str, tuple[str, range]] = {
+    "A": ("A Agropecuária", range(1, 4)),
+    "B": ("B Indústrias extrativas", range(5, 10)),
+    "C": ("C Indústrias de transformação", range(10, 34)),
+    "D": ("D Eletricidade e gás", range(35, 36)),
+    "E": ("E Água, esgoto e resíduos", range(36, 40)),
+    "F": ("Construção", range(41, 44)),
+    "G": ("G Comércio e reparação", range(45, 48)),
+    "H": ("H Transporte e armazenagem", range(49, 54)),
+    "I": ("I Alojamento e alimentação", range(55, 57)),
+    "J": ("J Informação e comunicação", range(58, 64)),
+    "K": ("K Financeiras e seguros", range(64, 67)),
+    "L": ("L Atividades imobiliárias", range(68, 69)),
+    "M": ("M Profissionais e técnicas", range(69, 76)),
+    "N": ("N Administrativas e apoio", range(77, 83)),
+    "O": ("O Administração pública", range(84, 85)),
+    "P": ("P Educação", range(85, 86)),
+    "Q": ("Q Saúde e serviço social", range(86, 89)),
+    "R": ("R Artes, esporte e recreação", range(90, 94)),
+    "S": ("S Outros serviços", range(94, 97)),
+    "T": ("T Serviços domésticos", range(97, 98)),
+    "U": ("U Organismos internacionais", range(99, 100)),
+}
+DIVISAO_PARA_SECAO: dict[str, str] = {
+    f"{division:02d}": code for code, (_, divisions) in SECOES.items() for division in divisions
+}
+PANEL_SECOES_CSV = DATA_DIR / "aeat_nr35_panel_secoes.csv"
 
 
 def _open_workbook(blob: bytes) -> Any:
@@ -592,6 +655,50 @@ def _check_vinculos_recovery(
     print(f"    cross-check vínculos: agregado difere {gap:.4%} entre as duas rotas")
 
 
+def _write_secoes(
+    obitos: dict[tuple[str, int], int],
+    vinculos: dict[tuple[str, int], float],
+    years: list[int],
+    pl: Any,
+) -> None:
+    """Write the same panel aggregated to CNAE sections.
+
+    Deaths and vínculos are summed before the ratio, so the section rate is the
+    employment-weighted one rather than a mean of division rates.
+    """
+    rows: list[dict[str, object]] = []
+    for year in years:
+        totals: dict[str, list[float]] = {}
+        for (division, row_year), v in vinculos.items():
+            if row_year != year:
+                continue
+            code = DIVISAO_PARA_SECAO.get(division)
+            if code is None:
+                continue
+            slot = totals.setdefault(code, [0.0, 0.0])
+            slot[0] += obitos.get((division, year), 0)
+            slot[1] += v
+        for code, (mortes, v) in totals.items():
+            if v < MIN_VINCULOS:
+                continue
+            rows.append(
+                {
+                    "setor": SECOES[code][0],
+                    "ano": year,
+                    "taxa_mortalidade": round(mortes / v * 1e5, 4),
+                    "obitos": int(mortes),
+                    "vinculos": round(v),
+                }
+            )
+    frame = pl.DataFrame(rows)
+    complete = (
+        frame.group_by("setor").agg(n=pl.len()).filter(pl.col("n") == len(years))["setor"].to_list()
+    )
+    frame = frame.filter(pl.col("setor").is_in(complete)).sort(["setor", "ano"])
+    frame.write_csv(PANEL_SECOES_CSV)
+    print(f"\nWrote {PANEL_SECOES_CSV} — {frame['setor'].n_unique()} seções x {len(years)} anos")
+
+
 def _write_panel(
     obitos: dict[tuple[str, int], int],
     vinculos: dict[tuple[str, int], float],
@@ -640,6 +747,7 @@ def _write_panel(
     )
     frame = frame.filter(pl.col("setor").is_in(complete)).sort(["setor", "ano"])
     frame.write_csv(PANEL_CSV)
+    _write_secoes(obitos, vinculos, years, pl)
 
     print(f"\nWrote {PANEL_CSV}")
     print(f"  {frame['setor'].n_unique()} unidades x {len(years)} anos ({years[0]}-{years[-1]})")

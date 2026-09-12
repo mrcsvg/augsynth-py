@@ -241,7 +241,7 @@ CELLS.append(
     e ano. A taxa de mortalidade é `óbitos / vínculos × 100.000` — a métrica que o
     próprio AEAT publica no capítulo de indicadores.
 
-    A célula abaixo carrega `\\_data/aeat_nr35_panel.csv` (dados reais, gerados por
+    A célula abaixo carrega `\\_data/aeat_nr35_panel_secoes.csv` (dados reais, gerados por
     `\\_fetch_aeat_nr35.py` — requer acesso a gov.br) e, na ausência dele, cai para
     `\\_data/aeat_nr35_panel_demo.csv`: um painel **simulado** com magnitudes
     calibradas no AEAT e um **efeito verdadeiro conhecido** injetado na construção
@@ -249,6 +249,15 @@ CELLS.append(
     `aeat_nr35_demo_truth.csv` e é usada nos atos seguintes para conferir se os
     estimadores a recuperam). O modo em uso é impresso em destaque; proveniência
     completa em [`_data/README-aeat.md`](_data/README-aeat.md).
+
+    **Por que seções da CNAE e não divisões.** O painel por divisão existe
+    (`\\_data/aeat_nr35_panel.csv`, 69 unidades) mas **não identifica** um controle
+    sintético: com 68 doadores e apenas 5 anos de pré-período, o QP do simplex
+    interpola o pré exatamente (RMSPE `2e-09`) e o ATT salta de −0,4 a −9,5 quando
+    se derruba um único doador. Agregar em seções (19 unidades) dilui as divisões
+    extremas, deixa a construção **fora do envelope convexo** dos doadores e
+    devolve um resíduo pré real (RMSPE ≈ 5,7%) contra o qual o estimador trabalha.
+    O Ato 7 quantifica o que resta de instabilidade — que não é pouco.
 
     Três decisões de preparo (valem para o painel real):
 
@@ -268,8 +277,10 @@ CELLS.append(
 
 CELLS.append(
     code("""
-    real_csv = DATA_DIR / "aeat_nr35_panel.csv"
+    secoes_csv = DATA_DIR / "aeat_nr35_panel_secoes.csv"
+    divisoes_csv = DATA_DIR / "aeat_nr35_panel.csv"
     demo_csv = DATA_DIR / "aeat_nr35_panel_demo.csv"
+    real_csv = secoes_csv if secoes_csv.exists() else divisoes_csv
     IS_DEMO = not real_csv.exists()
     truth = None
     if IS_DEMO:
@@ -353,10 +364,13 @@ CELLS.append(
     porque a construção tem *nível* de taxa que quase nenhum doador alcança; o que
     pedimos aos doadores é que reproduzam a *trajetória*.
 
-    Com **5 anos de pré e dezenas de doadores**, atenção ao risco simétrico: o QP
-    tem graus de liberdade de sobra e pode interpolar o pré exatamente mesmo sem
-    nenhum doador individualmente parecido (overfitting de interpolação). RMSPE pré
-    ≈ 0 aqui é sinal de alerta, não de sucesso.
+    Com **5 anos de pré**, o risco simétrico é real e foi medido: no painel por
+    *divisão* o QP interpolava o pré exatamente (RMSPE `2e-09`) — o que não é bom
+    ajuste, é ausência de identificação, já que infinitas combinações passam pelos
+    mesmos 5 pontos. No painel por *seção* isso não acontece, e o RMSPE pré abaixo
+    deve sair na casa de 5%: a construção não é alcançável por combinação convexa
+    das seções, o que é exatamente a condição em que a augmentação do Ato 4 tem
+    função. RMSPE pré ≈ 0 seria sinal de alerta, não de sucesso.
 """)
 )
 
@@ -443,7 +457,12 @@ CELLS.append(
       escolhido diz se a correção generaliza fora do ano deixado de fora.
 
     Com $T_0 = 5$, o LOO-CV tem só 5 dobras: a curva de CV abaixo merece ser olhada
-    ponto a ponto, não tratada como caixa-preta.
+    ponto a ponto, não tratada como caixa-preta. E há um limite conhecido — com 18
+    doadores e 5 períodos, a ridge com $\\lambda$ pequeno **também** interpola o
+    pré. Varrendo $\\lambda$ de $0{,}01\\sigma^2$ a $1000\\sigma^2$ o ATT anda de
+    −5,67 a −4,77 e o RMSPE pré de 0,02% a 5,69%: subir $\\lambda$ não estabiliza a
+    estimativa, apenas faz o AugSynth **convergir de volta ao SCM**. A augmentação
+    aqui melhora o ajuste pré, não a identificação.
 """)
 )
 
@@ -736,8 +755,10 @@ CELLS.append(
     reduziu óbitos nesses doadores, o contrafactual cai junto com a tratada e o ATT
     estimado é **subestimado** (viés contra o efeito).
 
-    Refazemos SCM e AugSynth sem esses doadores. Aproveitamos e rodamos o
-    leave-one-out clássico: derrubar o doador de maior peso e ver se o ATT se move.
+    Refazemos SCM e AugSynth sem esses doadores, e em seguida rodamos o
+    leave-one-out **sobre todos** os doadores. Com 5 anos de pré esse é o
+    diagnóstico que mais importa: a amplitude do ATT ao derrubar uma unidade
+    mede quanto da estimativa vem dos dados e quanto vem da escolha do pool.
 """)
 )
 
@@ -769,6 +790,20 @@ CELLS.append(
     print(f"ATT AugSynth — sem expostos         : {aug_limpo.att_:+.3f}")
     print(f"ATT SCM      — sem expostos         : {scm_limpo.att_:+.3f}")
     print(f"ATT AugSynth — sem '{top_donor}' (maior |peso|): {aug_loo.att_:+.3f}")
+
+    # Leave-one-out completo: a faixa é o resultado, não a estimativa pontual.
+    loo = []
+    for u in donors:
+        loo.append((u, Synth().fit(panel.filter(pl.col(UNIT) != u), unit=UNIT, time=TIME,
+                                   outcome=OUT, treated=TREATED, treatment_time=T0_VIGENCIA).att_))
+    valores = [v for _, v in loo]
+    print(f"\\nLeave-one-out sobre TODOS os {len(loo)} doadores (SCM):")
+    print(f"  faixa do ATT : {min(valores):+.2f} a {max(valores):+.2f} "
+          f"(amplitude {max(valores) - min(valores):.2f}; pontual {scm.att_:+.2f})")
+    print(f"  sinal        : {'negativo em todas' if max(valores) < 0 else 'TROCA DE SINAL'}"
+          f" as {len(loo)} reestimativas")
+    for u, v in sorted(loo, key=lambda t: -abs(t[1] - scm.att_))[:3]:
+        print(f"    mais sensível: sem {u:30s} {v:+.3f} ({v - scm.att_:+.3f})")
 """)
 )
 
@@ -886,6 +921,11 @@ CELLS.append(
 
     **Sustenta.**
 
+    - **O sinal, não a magnitude.** O ATT é negativo em todas as especificações
+      testadas — SCM e AugSynth, todos os cenários de T₀, todo o leave-one-out e
+      toda a varredura de λ. O que o desenho **não** sustenta é um valor pontual:
+      o leave-one-out varre uma faixa larga, e reportar "−4,8 por 100 mil" como
+      se fosse uma estimativa seria falsa precisão.
     - A escolha de **T₀ = vigência (2013)**, documentada no relógio institucional do
       Ato 1 e estressada no Ato 6 — publicação vs vigência não é detalhe: muda o
       pré, muda o pós e muda a leitura do ano híbrido de 2012.
@@ -902,8 +942,16 @@ CELLS.append(
       (`_fetch_aeat_nr35.py`), todos os números acima são de um painel simulado —
       o notebook valida o *pipeline* (a verdade injetada é recuperada?), não a
       NR-35. Nenhum valor deste modo pode ser citado como estatística oficial.
-    - **5 anos de pré** — a restrição que organiza o notebook inteiro. Alongar para
-      trás de 2008 cruza a quebra do NTEP (e a transição CNAE 1.0→2.0 no AEAT).
+    - **5 anos de pré** — a restrição que organiza o notebook inteiro, e ela é
+      fatal para a identificação pontual. Com $T_0 = 5$, qualquer pool com 5+
+      doadores utilizáveis consegue interpolar o pré; agregar em seções evita a
+      interpolação exata mas não elimina a instabilidade (Ato 7). Alongar para
+      trás de 2008 cruza a quebra do NTEP (e a transição CNAE 1.0→2.0 no AEAT),
+      então essa restrição não tem saída dentro deste desenho.
+    - **A queda dos óbitos é, em boa parte, queda do emprego.** Entre 2013 e 2019
+      os óbitos na construção caem 53% (451 → 214), mas os vínculos caem 45%
+      (3,33 M → 1,83 M): a taxa cai 13,5%. Ler a contagem como efeito da norma
+      atribuiria a ela cerca de quatro vezes o que os dados suportam.
     - **Desfecho agregado**: mortalidade por *todas* as causas de acidente, não só
       quedas de altura. O AEAT não publica CID × CNAE (a Subseção C é CID × UF), e o
       CID da CAT é a natureza da lesão (cap. XIX, S00–T98), não a causa externa —
