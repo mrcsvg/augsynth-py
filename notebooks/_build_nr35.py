@@ -228,6 +228,14 @@ CELLS.append(
 
     UNIT, TIME, OUT = "setor", "ano", "taxa_mortalidade"
     OUT_LABEL = "Óbitos por 100 mil vínculos"
+
+    # Grade de λ para o LOO-CV da ridge, passada explicitamente em vez de usar a
+    # automática: com J=68 doadores e T0=5 o SCM já fecha o pré exatamente, então
+    # o CV persegue λ→0 e encosta no piso da grade automática (que começa em ~4e-4).
+    # Uma grade boundary-clipped não é um λ escolhido — é um λ censurado. Descer
+    # até 1e-8 deixa o mínimo cair no interior, e o λ minúsculo resultante passa a
+    # ser leitura do desenho, não artefato da grade.
+    LAMBDA_GRID = np.logspace(-8, 4, 80)
 """)
 )
 
@@ -451,7 +459,7 @@ CELLS.append(
     code("""
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="CV-selected lambda")
-        aug = AugSynth().fit(
+        aug = AugSynth(lambda_grid=LAMBDA_GRID).fit(
             panel,
             unit=UNIT, time=TIME, outcome=OUT,
             treated=TREATED, treatment_time=T0_VIGENCIA,
@@ -685,7 +693,7 @@ CELLS.append(
                             treated=TREATED, treatment_time=t0)
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message="CV-selected lambda")
-            f_aug = AugSynth().fit(pnl, unit=UNIT, time=TIME, outcome=OUT,
+            f_aug = AugSynth(lambda_grid=LAMBDA_GRID).fit(pnl, unit=UNIT, time=TIME, outcome=OUT,
                                    treated=TREATED, treatment_time=t0)
         fits_cen[nome] = (f_scm, f_aug)
         linhas.append({
@@ -754,7 +762,7 @@ CELLS.append(
                             treated=TREATED, treatment_time=T0_VIGENCIA)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="CV-selected lambda")
-        aug_limpo = AugSynth().fit(panel_limpo, unit=UNIT, time=TIME, outcome=OUT,
+        aug_limpo = AugSynth(lambda_grid=LAMBDA_GRID).fit(panel_limpo, unit=UNIT, time=TIME, outcome=OUT,
                                    treated=TREATED, treatment_time=T0_VIGENCIA)
 
     # Leave-one-out do doador de maior peso efetivo.
@@ -762,7 +770,7 @@ CELLS.append(
     panel_loo = panel.filter(pl.col(UNIT) != top_donor)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, message="CV-selected lambda")
-        aug_loo = AugSynth().fit(panel_loo, unit=UNIT, time=TIME, outcome=OUT,
+        aug_loo = AugSynth(lambda_grid=LAMBDA_GRID).fit(panel_loo, unit=UNIT, time=TIME, outcome=OUT,
                                  treated=TREATED, treatment_time=T0_VIGENCIA)
 
     print(f"ATT AugSynth — pool completo        : {aug.att_:+.3f}")
