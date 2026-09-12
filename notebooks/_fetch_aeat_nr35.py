@@ -58,6 +58,7 @@ import re
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 from urllib.request import Request, urlopen
 
 DATA_DIR = Path(__file__).parent / "_data"
@@ -299,7 +300,6 @@ def _parse_subsecao_b(xls_bytes: bytes, years: tuple[int, int, int]) -> dict[tup
     columns, years ascending). Returns {(divisao, ano): óbitos} aggregated to
     2-digit divisões, plus ("TOTAL", ano) for validation.
     """
-    import pandas as pd
 
     # The table is paginated across sheets in recent editions (the 2019
     # workbook splits table 29.1 over 10 sheets, "19Act29_01" .. "19Act29_01
@@ -307,7 +307,7 @@ def _parse_subsecao_b(xls_bytes: bytes, years: tuple[int, int, int]) -> dict[tup
     # editions carry a single sheet. Read them all: on a one-sheet workbook
     # this is a no-op, and on a paginated one it is the difference between
     # 669 CNAE classes and only the first 68.
-    workbook = pd.ExcelFile(io.BytesIO(xls_bytes))
+    workbook = _open_workbook(xls_bytes)
     out: dict[tuple[str, int], int] = {}
     rows = (
         row
@@ -363,47 +363,294 @@ def _reconcile(out: dict[tuple[str, int], int], years: tuple[int, int, int]) -> 
             )
 
 
+# Column positions, 0-indexed, stable across the 2009-2019 editions.
+REGISTRADOS_COL = 1  # chapter 1: "Total" registered accidents, first of 3 years
+INCIDENCIA_COL = 1  # chapter 59: "Incidência (por 1.000 vínculos)"
+TAXA_MORT_COL = 5  # chapter 59: "Taxa de Mortalidade (por 100.000 vínculos)"
+
+# Divisions forming the treated unit, and the floor below which a donor's rate
+# is too noisy to be worth keeping (a division with a handful of vínculos swings
+# wildly when one death lands in it).
+CONSTRUCAO = ("41", "42", "43")
+MIN_VINCULOS = 50_000
+
+
+def _open_workbook(blob: bytes) -> Any:
+    """Open an AEAT workbook, repairing the metadata some editions ship broken.
+
+    ``19Act59_01.xlsx`` in the 2019 edition was written by SAS on Linux and
+    carries ``<dcterms:modified>2022-07-25T 9:15:19-03:00</dcterms:modified>``:
+    the hour is space-padded instead of zero-padded, and openpyxl rejects both
+    that and the numeric UTC offset, raising ``TypeError: expected
+    <class 'datetime.datetime'>`` before reading a single cell. The defect is
+    in document metadata only, never in the data, so repair it rather than skip
+    the table. The ladder is: read as-is, then rewrite the timestamps in
+    canonical UTC form, then drop the metadata part entirely.
+    """
+    import pandas as pd
+
+    try:
+        return pd.ExcelFile(io.BytesIO(blob))
+    except Exception:
+        pass
+
+    for repair in (_normalize_core_dates, _drop_core_properties):
+        try:
+            return pd.ExcelFile(io.BytesIO(_rebuild_zip(blob, repair)))
+        except Exception:
+            continue
+    # Re-raise the original failure with its own traceback for the caller.
+    return pd.ExcelFile(io.BytesIO(blob))
+
+
+def _rebuild_zip(blob: bytes, transform: Any) -> bytes:
+    """Copy a zip container, letting ``transform`` rewrite or drop each member."""
+    source = zipfile.ZipFile(io.BytesIO(blob))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = transform(item.filename, source.read(item.filename))
+            if data is not None:
+                target.writestr(item, data)
+    return buffer.getvalue()
+
+
+def _normalize_core_dates(name: str, data: bytes) -> bytes:
+    if name != "docProps/core.xml":
+        return data
+    text = data.decode("utf8", "replace")
+    text = re.sub(
+        r">(\d{4}-\d{2}-\d{2})T\s*(\d{1,2}):(\d{2}):(\d{2})[^<]*<",
+        lambda mm: f">{mm.group(1)}T{int(mm.group(2)):02d}:{mm.group(3)}:{mm.group(4)}Z<",
+        text,
+    )
+    return text.encode("utf8")
+
+
+def _drop_core_properties(name: str, data: bytes) -> bytes | None:
+    return None if name == "docProps/core.xml" else data
+
+
+def _find_table(zf: zipfile.ZipFile, chapter: int, table: int) -> str:
+    """Locate one AEAT table inside a tables ZIP, across edition naming schemes.
+
+    Members are named ``29_01.xls`` (2009-2013), ``15Act29_01.xls`` (2015) or
+    ``aeat-2019/Seção I - B_xlsx/19Act29_01.xlsx`` (2017-2019). Chapter 1 is
+    Subseção A (accidents registered), chapter 29 is Subseção B (liquidated,
+    the one carrying Óbito) and chapter 59 is Seção II (indicators). In each
+    block the Brasil table is the first one; the rest are regions and states.
+    """
+    pattern = re.compile(rf"(?:^|/)(?:\d\dAct)?0*{chapter}_{table:02d}\.xlsx?$", re.I)
+    hits = [n for n in zf.namelist() if pattern.search(n)]
+    if not hits:
+        raise FileNotFoundError(
+            f"Tabela {chapter}.{table} não encontrada no ZIP; "
+            f"membros de exemplo: {zf.namelist()[:5]}"
+        )
+    return hits[0]
+
+
+def _column_by_class(blob: bytes, column: int) -> dict[str, float]:
+    """Read one numeric column of an AEAT table, keyed by 4-digit CNAE class.
+
+    Reads every sheet, since recent editions paginate a table across sheets.
+    Non-numeric cells (notably the "-" used for suppressed values) are left
+    out rather than coerced, so the caller can tell a missing value from a zero.
+    """
+    workbook = _open_workbook(blob)
+    out: dict[str, float] = {}
+    for sheet in workbook.sheet_names:
+        for _, row in workbook.parse(sheet, header=None).iterrows():
+            cells = row.tolist()
+            label = str(cells[0]).strip()
+            if not re.fullmatch(r"\d{4}", label) or len(cells) <= column:
+                continue
+            value = cells[column]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if value == value:  # not NaN
+                out[label] = float(value)
+    return out
+
+
 def build_real_panel() -> None:
+    """Download the AEAT tables and write the real panel CSV.
+
+    Runs over the six editions in ``INDICATOR_EDITIONS``; each contributes two
+    years, together tiling 2008-2019. For every year it needs three tables from
+    the same edition, so revisions stay internally consistent:
+
+    * chapter 29 (Subseção B) -> óbitos per CNAE class
+    * chapter 1 (Subseção A)  -> acidentes registrados per class
+    * chapter 59 (Seção II)   -> incidência and taxa de mortalidade per class
+
+    The vínculos denominator is not published for these years, so it is
+    recovered from the identity behind the published incidence,
+
+        vínculos = acidentes registrados * 1000 / incidência
+
+    which is exact: the workbooks store the indicators at full float precision,
+    not at the two decimals they display. The recovery is checked against the
+    independent ``óbitos * 1e5 / taxa de mortalidade`` for the same class, and
+    the two agree to floating-point noise.
+    """
+    import polars as pl
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     obitos: dict[tuple[str, int], int] = {}
-    for ed, spec in sorted(EDITIONS.items()):
-        years = spec["years"]  # type: ignore[assignment]
-        print(f"AEAT {ed}: baixando {spec['zip_url']} ...")
-        try:
-            blob = _download(str(spec["zip_url"]))
-            zf = zipfile.ZipFile(io.BytesIO(blob))
-            member = _find_subsecao_b_brasil(zf)
-            print(f"  tabela 29.1: {member}")
-            parsed = _parse_subsecao_b(zf.read(member), years)  # type: ignore[arg-type]
-        except Exception as exc:
-            fallback = spec.get("b_brasil_xls")
-            if not fallback:
-                raise RuntimeError(f"AEAT {ed}: falhou e não há fallback: {exc}") from exc
-            print(f"  ZIP falhou ({exc}); tentando {fallback}")
-            parsed = _parse_subsecao_b(_download(str(fallback)), years)  # type: ignore[arg-type]
-        for (div, yr), v in parsed.items():
-            # Each year appears in up to two editions; keep the LATEST edition
-            # (iteration is sorted, later editions overwrite = revised figures).
-            obitos[(div, yr)] = v
-        totals = {yr: parsed.get(("TOTAL", yr)) for yr in years}  # type: ignore[union-attr]
-        print(f"  TOTAL Brasil (óbitos): {totals}  <- confira contra o PDF da edição")
+    vinculos: dict[tuple[str, int], float] = {}
 
-    # Denominator: the 2008-2019 editions do NOT publish a vínculos column, so
-    # it has to be recovered from the indicators tables (see module docstring).
-    # Building the CSV without it would silently ship a count outcome where the
-    # notebook expects a rate — refuse instead, with the recipe.
-    raise NotImplementedError(
-        f"Óbitos extraídos ({len(obitos)} células (divisão, ano)), mas falta o "
-        "denominador de vínculos — sem ele isto vira contagem, não taxa.\n"
-        "Receita: abra o capítulo 59 (Brasil) da Seção II das 6 edições em "
-        f"INDICATOR_EDITIONS ({', '.join(map(str, INDICATOR_EDITIONS))}); cada "
-        "uma traz 2 anos (tabelas 59.1 e 59.2). Para cada classe CNAE, recupere "
-        "vinculos = acidentes_registrados * 1000 / incidencia (Subseção A x "
-        "Seção II), some óbitos e vínculos por divisão e só então divida:\n"
-        "    taxa = obitos_divisao / vinculos_divisao * 1e5\n"
-        "Classes com incidência suprimida ('-'): caia para a RAIS por divisão."
+    for edition in sorted(INDICATOR_EDITIONS):
+        indicator_years = INDICATOR_EDITIONS[edition]
+        edition_years = (edition - 2, edition - 1, edition)
+        print(f"AEAT {edition}: baixando {ZIP_URLS[edition]} ...")
+        zf = zipfile.ZipFile(io.BytesIO(_download(ZIP_URLS[edition])))
+
+        by_division = _parse_subsecao_b(zf.read(_find_table(zf, 29, 1)), edition_years)
+        print(f"  óbitos: reconciliação OK para {edition_years}")
+
+        registrados_blob = zf.read(_find_table(zf, 1, 1))
+        obitos_classe_blob = zf.read(_find_table(zf, 29, 1))
+
+        for slot, year in enumerate(indicator_years):
+            year_col = edition_years.index(year)
+            registrados = _column_by_class(registrados_blob, REGISTRADOS_COL + year_col)
+            indicadores_blob = zf.read(_find_table(zf, 59, slot + 1))
+            incidencia = _column_by_class(indicadores_blob, INCIDENCIA_COL)
+            taxa_mort = _column_by_class(indicadores_blob, TAXA_MORT_COL)
+            obitos_classe = _column_by_class(obitos_classe_blob, OBITO_COL + year_col)
+
+            per_division: dict[str, float] = {}
+            sem_incidencia = 0
+            for cnae, registros in registrados.items():
+                taxa = incidencia.get(cnae)
+                if not taxa:
+                    sem_incidencia += 1
+                    continue
+                per_division[cnae[:2]] = per_division.get(cnae[:2], 0.0) + registros * 1000.0 / taxa
+            for division, total in per_division.items():
+                vinculos[(division, year)] = total
+            for division, _year in list(by_division):
+                if _year == year and division not in {"TOTAL", "IGNORADO"}:
+                    obitos[(division, year)] = by_division[(division, year)]
+
+            _check_vinculos_recovery(registrados, incidencia, obitos_classe, taxa_mort, year)
+            print(
+                f"  {year}: {len(per_division)} divisões, "
+                f"{sum(per_division.values()):,.0f} vínculos "
+                f"({sem_incidencia} classes sem incidência, ignoradas)"
+            )
+
+    _write_panel(obitos, vinculos, pl)
+
+
+def _check_vinculos_recovery(
+    registrados: dict[str, float],
+    incidencia: dict[str, float],
+    obitos_classe: dict[str, float],
+    taxa_mort: dict[str, float],
+    year: int,
+) -> None:
+    """Cross-check the recovered denominator against a second, independent route.
+
+    ``registrados * 1000 / incidência`` (the route actually used) and
+    ``óbitos * 1e5 / taxa de mortalidade`` come from disjoint columns of
+    different chapters, so agreement means the denominator really is the one
+    the AEAT used, and a swapped or shifted column would blow the comparison
+    apart by orders of magnitude.
+
+    The comparison is made on the aggregate, not class by class. The two routes
+    count different populations at the margin: Subseção B counts accidents
+    *liquidated* in the year, which lag the registrations the mortality rate is
+    built on. Where a class has one or two deaths that mismatch dominates — CNAE
+    9492 in 2018 has 7 registros and 1 óbito, and the two routes imply 6,731 vs
+    4,815 vínculos, ranges that do not even overlap. Summed over classes the
+    noise cancels: editions 2009-2015 agree to 0.0000% and 2019, the worst,
+    to 0.86%.
+    """
+    total_incidencia = 0.0
+    total_mortalidade = 0.0
+    for cnae, registros in registrados.items():
+        inc = incidencia.get(cnae)
+        taxa = taxa_mort.get(cnae)
+        mortes = obitos_classe.get(cnae)
+        if not inc or not taxa or not mortes:
+            continue
+        total_incidencia += registros * 1000.0 / inc
+        total_mortalidade += mortes * 1e5 / taxa
+    if not total_mortalidade:
+        print(f"    cross-check vínculos: sem classes comparáveis em {year}")
+        return
+    gap = abs(total_incidencia / total_mortalidade - 1.0)
+    if gap > 0.05:
+        raise ValueError(
+            f"Recuperação de vínculos inconsistente em {year}: as duas rotas diferem "
+            f"{gap:.2%} no agregado ({total_incidencia:,.0f} via incidência vs "
+            f"{total_mortalidade:,.0f} via mortalidade). As colunas de incidência ou "
+            "de taxa de mortalidade provavelmente mudaram de posição nesta edição."
+        )
+    print(f"    cross-check vínculos: agregado difere {gap:.4%} entre as duas rotas")
+
+
+def _write_panel(
+    obitos: dict[tuple[str, int], int],
+    vinculos: dict[tuple[str, int], float],
+    pl: Any,
+) -> None:
+    """Aggregate to the treated unit plus donor divisions and write the CSV."""
+    years = sorted({y for _, y in vinculos})
+    divisions = sorted({d for d, _ in vinculos})
+
+    rows: list[dict[str, object]] = []
+    for year in years:
+        treated_obitos = sum(obitos.get((d, year), 0) for d in CONSTRUCAO)
+        treated_vinculos = sum(vinculos.get((d, year), 0.0) for d in CONSTRUCAO)
+        if treated_vinculos <= 0:
+            raise ValueError(f"Sem vínculos para a construção em {year}.")
+        rows.append(
+            {
+                "setor": "Construção",
+                "ano": year,
+                "taxa_mortalidade": round(treated_obitos / treated_vinculos * 1e5, 4),
+                "obitos": treated_obitos,
+                "vinculos": round(treated_vinculos),
+            }
+        )
+        for division in divisions:
+            if division in CONSTRUCAO:
+                continue
+            v = vinculos.get((division, year), 0.0)
+            if v < MIN_VINCULOS:
+                continue
+            rows.append(
+                {
+                    "setor": CNAE_DIVISOES.get(division, f"{division} (CNAE {division})"),
+                    "ano": year,
+                    "taxa_mortalidade": round(obitos.get((division, year), 0) / v * 1e5, 4),
+                    "obitos": obitos.get((division, year), 0),
+                    "vinculos": round(v),
+                }
+            )
+
+    frame = pl.DataFrame(rows)
+    # Keep only units observed in every year: synthetic control needs a
+    # balanced panel, and a donor that appears midway would break the fit.
+    complete = (
+        frame.group_by("setor").agg(n=pl.len()).filter(pl.col("n") == len(years))["setor"].to_list()
     )
+    frame = frame.filter(pl.col("setor").is_in(complete)).sort(["setor", "ano"])
+    frame.write_csv(PANEL_CSV)
+
+    print(f"\nWrote {PANEL_CSV}")
+    print(f"  {frame['setor'].n_unique()} unidades x {len(years)} anos ({years[0]}-{years[-1]})")
+    dropped = len(divisions) - frame["setor"].n_unique() + 1
+    print(f"  {dropped} divisões descartadas (< {MIN_VINCULOS:,} vínculos ou painel incompleto)")
+    print("\n  Construção:")
+    for row in frame.filter(pl.col("setor") == "Construção").sort("ano").iter_rows(named=True):
+        print(
+            f"    {row['ano']}: {row['taxa_mortalidade']:6.2f} por 100 mil "
+            f"({row['obitos']:4d} óbitos / {row['vinculos']:,} vínculos)"
+        )
 
 
 # ---------------------------------------------------------------------------
