@@ -911,6 +911,10 @@ CELLS.append(
     md("""
     ## Ato 9 — Conclusões e limitações
 
+    > **Revisado pelo Ato 10.** A magnitude fechada aqui está inflada por um
+    > doador contaminado (Brumadinho, 2019); o Ato 10 diagnostica e corrige.
+    > O texto abaixo fica como estava, como registro.
+
     A tabela abaixo fecha os números dos atos anteriores em um só lugar.
 """)
 )
@@ -991,6 +995,212 @@ CELLS.append(
       [PDF oficial](https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/inspecao-do-trabalho/seguranca-e-saude-no-trabalho/sst-portarias/2012/portaria_313_aprova_a_nr_35.pdf)
     - AEAT — Anuário Estatístico de Acidentes do Trabalho (vários anos), MPS.
       [Página-índice com as tabelas](https://www.gov.br/previdencia/pt-br/assuntos/previdencia-social/saude-e-seguranca-do-trabalhador/acidente_trabalho_incapacidade)
+""")
+)
+
+
+# --- Ato 10 ----------------------------------------------------------------
+CELLS.append(
+    md("""
+    ## Ato 10 — Um doador contaminado: Brumadinho
+
+    > **Este ato revisa o Ato 9.** Os atos anteriores ficam como estão — são o
+    > registro de como o desenho foi construído. O que vem abaixo foi descoberto
+    > *depois*, olhando a série de gaps ano a ano em vez da média do pós.
+
+    A média do pós esconde de onde o efeito vem. Abrindo o gap por ano, um único
+    ano domina tudo: **2019**, com um gap cerca de quatro vezes maior que o de
+    qualquer outro. A causa não está na construção — está num doador.
+
+    Em **25/01/2019** a barragem da Vale em Brumadinho rompeu e matou cerca de 270
+    pessoas, quase todas trabalhadores. Isso cai na CNAE **seção B (indústrias
+    extrativas)**, que o SCM escolheu como **segundo maior doador**. O contrafactual
+    da construção em 2019 herda o desastre.
+
+    Abadie (2021, JEL) é explícito: o pool de doadores deve excluir unidades
+    sujeitas a choques idiossincráticos durante o período de estudo. Manter a
+    seção B intacta não é escolha de calibragem — é violação de premissa.
+
+    A correção não precisa ser grosseira. Brumadinho está inteiramente contido na
+    **divisão 07 (minerais metálicos)**; a divisão 08 (não-metálicos) passa
+    incólume. Dá para amputar só a divisão contaminada e preservar o doador de
+    alta mortalidade — que é justamente o que o pool tem de escasso: no pré, só
+    duas seções ficam acima da construção.
+""")
+)
+
+CELLS.append(
+    code("""
+    # Pré-requisito: painel real por seção + painel por divisão (para isolar a 07).
+    ATO10_OK = (not IS_DEMO) and secoes_csv.exists() and divisoes_csv.exists()
+
+    if not ATO10_OK:
+        print("Ato 10 exige o painel real por seção E o painel por divisão.")
+        print("Em modo demo ou sem o painel por divisão, este ato é pulado.")
+    else:
+        div = pl.read_csv(divisoes_csv).filter(pl.col(TIME).is_between(ANO_MIN, ANO_MAX))
+
+        # 1) O gap ano a ano do ajuste principal — onde a média do pós se forma.
+        gap = scm.actual_ - scm.synthetic_
+        anos = sorted(panel[TIME].unique().to_list())
+        print("gap ano a ano (real - sintético), ajuste do Ato 3:")
+        for y, g, syn in zip(anos, gap, scm.synthetic_):
+            flag = "  <-- pós" if y >= T0_VIGENCIA else ""
+            alerta = "   *** OUTLIER" if abs(g) > 3 * np.median(np.abs(gap)) else ""
+            print(f"   {y}  sintético={syn:6.2f}  gap={g:+7.2f}{flag}{alerta}")
+
+        post = [g for y, g in zip(anos, gap) if y >= T0_VIGENCIA]
+        pior = max(range(len(post)), key=lambda i: abs(post[i]))
+        ano_pior = [y for y in anos if y >= T0_VIGENCIA][pior]
+        print(f"\\n   {ano_pior} sozinho responde por "
+              f"{post[pior] / len(post) / np.mean(post) * 100:.0f}% do ATT médio.")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO10_OK:
+        # 2) A seção B e suas divisões: o desastre está todo na 07.
+        b = panel.filter(pl.col(UNIT) == "B Indústrias extrativas").sort(TIME)
+        print("B Indústrias extrativas (doador):")
+        for r in b.iter_rows(named=True):
+            print(f"   {r[TIME]}  taxa={r[OUT]:7.2f}  óbitos={r['obitos']:4d}")
+
+        print("\\ndivisões extrativas no painel por divisão:")
+        for s in sorted(u for u in div[UNIT].unique().to_list() if u[:2] in ("05", "06", "07", "08", "09")):
+            sub = div.filter(pl.col(UNIT) == s).sort(TIME)
+            o = {r[TIME]: r["obitos"] for r in sub.iter_rows(named=True)}
+            print(f"   {s:42s} " + " ".join(f"{o.get(y, 0):4d}" for y in range(2015, 2020)))
+        print(f"   {'anos:':42s} " + " ".join(f"{y:4d}" for y in range(2015, 2020)))
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO10_OK:
+        # 3) B* = seção B menos a divisão 07. Subtração validada: 07 ⊂ B em todo ano.
+        NOME_BSTAR = "B* Extrativas (s/ metálicos)"
+        d07 = div.filter(pl.col(UNIT).str.starts_with("07")).sort(TIME)
+        b_ord = panel.filter(pl.col(UNIT) == "B Indústrias extrativas").sort(TIME)
+
+        assert (b_ord["obitos"].to_numpy() >= d07["obitos"].to_numpy()).all()
+        assert (b_ord["vinculos"].to_numpy() >= d07["vinculos"].to_numpy()).all()
+
+        bstar = (
+            b_ord.join(
+                d07.select([pl.col(TIME),
+                            pl.col("obitos").alias("o7"),
+                            pl.col("vinculos").alias("v7")]),
+                on=TIME,
+            )
+            .with_columns([
+                (pl.col("obitos") - pl.col("o7")).alias("obitos"),
+                (pl.col("vinculos") - pl.col("v7")).alias("vinculos"),
+            ])
+            .with_columns([
+                (pl.col("obitos") / pl.col("vinculos") * 1e5).round(4).alias(OUT),
+                pl.lit(NOME_BSTAR).alias(UNIT),
+            ])
+            .select([UNIT, TIME, OUT, "obitos", "vinculos"])
+        )
+
+        panel_d = pl.concat([
+            panel.filter(pl.col(UNIT) != "B Indústrias extrativas").select(bstar.columns),
+            bstar,
+        ]).sort([UNIT, TIME])
+
+        print(f"{NOME_BSTAR} — o doador preservado:")
+        for r in bstar.sort(TIME).iter_rows(named=True):
+            print(f"   {r[TIME]}  taxa={r[OUT]:6.2f}  óbitos={r['obitos']:3d}")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO10_OK:
+        # 4) Quatro desenhos lado a lado. D é o recomendado.
+        def _diag(p, rotulo, tmax=ANO_MAX):
+            p = p.filter(pl.col(TIME) <= tmax)
+            s = Synth().fit(p, unit=UNIT, time=TIME, outcome=OUT,
+                            treated=TREATED, treatment_time=T0_VIGENCIA)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, message="CV-selected lambda")
+                a = AugSynth(lambda_grid=LAMBDA_GRID).fit(
+                    p, unit=UNIT, time=TIME, outcome=OUT,
+                    treated=TREATED, treatment_time=T0_VIGENCIA)
+            return {
+                "desenho": rotulo,
+                "ATT SCM": round(s.att_, 2),
+                "ATT Aug": round(a.att_, 2),
+                "RMSPE pré %": round(s.rmspe_pre_ * 100, 2),
+                "p (block)": round(conformal_pvalue(s, permutation_type="block"), 3),
+            }, s
+
+        linhas, ajustes = [], {}
+        for rotulo, p, tmax in [
+            ("A) completo (contaminado)", panel, ANO_MAX),
+            ("B) dropa seção B inteira", panel.filter(pl.col(UNIT) != "B Indústrias extrativas"), ANO_MAX),
+            ("C) trunca antes de 2019", panel, ANO_MAX - 1),
+            ("D) amputa divisão 07", panel_d, ANO_MAX),
+        ]:
+            linha, fit = _diag(p, rotulo, tmax)
+            linhas.append(linha)
+            ajustes[rotulo] = fit
+
+        pl.Config.set_tbl_rows(10)
+        display(pl.DataFrame(linhas))
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO10_OK:
+        # 5) O gap de 2019 antes e depois da amputação.
+        s_a = ajustes["A) completo (contaminado)"]
+        s_d = ajustes["D) amputa divisão 07"]
+        anos = sorted(panel[TIME].unique().to_list())
+
+        fig, ax = plt.subplots(figsize=(9, 4.6))
+        ax.axhline(0, color=COLOR_TEXT, lw=0.9)
+        ax.axvline(T0_VIGENCIA - 0.5, color=COLOR_TEXT, ls="--", lw=0.9, alpha=0.55)
+        ax.plot(anos, s_a.actual_ - s_a.synthetic_, "o-", color=COLOR_DONOR,
+                lw=1.6, label="A) pool contaminado")
+        ax.plot(anos, s_d.actual_ - s_d.synthetic_, "o-", color=COLOR_AUGMENTED,
+                lw=2.0, label="D) divisão 07 amputada")
+        ax.annotate("Brumadinho\\n(25/01/2019)", xy=(ANO_MAX, (s_a.actual_ - s_a.synthetic_)[-1]),
+                    xytext=(ANO_MAX - 3.2, (s_a.actual_ - s_a.synthetic_)[-1] * 0.75),
+                    arrowprops=dict(arrowstyle="->", color=COLOR_TREATED, lw=1.2),
+                    color=COLOR_TREATED, fontsize=10, ha="left")
+        ax.set_xlabel("Ano")
+        ax.set_ylabel("Gap (real − sintético)")
+        ax.set_title("Um doador contaminado desloca o contrafactual de um ano inteiro")
+        ax.legend(loc="lower left")
+        plt.tight_layout(); plt.show()
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O que o Ato 10 muda — e o que não muda
+
+    **Muda a magnitude.** O ATT de manchete dos atos anteriores era inflado por um
+    desastre industrial dentro do pool. Com a divisão 07 amputada o efeito encolhe
+    para cerca de metade, e o gap de 2019 volta para a mesma ordem de grandeza dos
+    demais anos do pós.
+
+    **Muda a leitura do leave-one-out.** A "faixa" reportada no Ato 7 não era uma
+    medida de incerteza: a ponta menos negativa dela *era* Brumadinho, sem nome. O
+    diagnóstico funcionou — a leitura dele é que faltou.
+
+    **Não muda a conclusão.** Nenhuma das quatro especificações separa o efeito de
+    placebo: o p conformal em bloco não desce o bastante em nenhuma delas, e a
+    construção não sobe no ranking de placebos in-space. Corrigir o doador torna o
+    número **honesto**, não **conclusivo**.
+
+    **O gargalo continua sendo $T_0 = 5$.** Com cinco anos de pré, nenhum arranjo
+    de doadores resolve a identificação pontual — ver a issue de estender o
+    pré-período para trás de 2008, que é o único caminho que ataca a causa em vez
+    do sintoma.
 """)
 )
 
