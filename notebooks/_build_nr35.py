@@ -601,6 +601,11 @@ CELLS.append(
     md("""
     ## Ato 5 — É real? Conformal (CWZ 2021) + placebos in-space
 
+    > **Revisado pelo Ato 11.** Os p-valores conformais em bloco desta seção vêm
+    > de uma janela pós-dominada (5 pré / 7 pós), regime em que o teste anda para
+    > trás: o p sobe com o efeito verdadeiro. Não os leia como ausência de efeito.
+    > Os placebos in-space abaixo não têm esse problema. O texto fica como estava.
+
     Dois instrumentos independentes:
 
     1. **Inferência conformal** (Chernozhukov, Wüthrich & Zhu 2021): testa
@@ -1201,6 +1206,234 @@ CELLS.append(
     de doadores resolve a identificação pontual — ver a issue de estender o
     pré-período para trás de 2008, que é o único caminho que ataca a causa em vez
     do sintoma.
+""")
+)
+
+# --- Ato 11 ----------------------------------------------------------------
+CELLS.append(
+    md("""
+    ## Ato 11 — O p-valor estava invertido
+
+    O Ato 10 fechou dizendo que nenhuma especificação separa o efeito de placebo,
+    apoiado nos p-valores conformais: 0,750 no desenho A, 0,750 no D. Este ato
+    mostra que **esses p-valores não significam o que parecem significar**, e
+    que a frase correta não é "não há evidência de efeito" e sim "este desenho
+    não consegue produzir evidência".
+
+    O Ato 8 mediu o MDE no laboratório do pré-período, com janelas de 1 e 2 anos.
+    A pergunta que ficou de fora é a do desenho que de fato usamos: **a janela de
+    7 anos, 2013–2019.** Injetando reduções cada vez maiores na construção e
+    reestimando, o p-valor deveria cair. Ele sobe.
+""")
+)
+
+CELLS.append(
+    code("""
+    ATO11_OK = ATO10_OK
+    if ATO11_OK:
+        # 1) O sintoma: injeta reduções crescentes no desenho D e mede o p.
+        def _p_com_efeito(p_base, t0, efeito):
+            pe = p_base.with_columns(
+                pl.when((pl.col(UNIT) == TREATED) & (pl.col(TIME) >= t0))
+                .then(pl.col(OUT) * (1 + efeito)).otherwise(pl.col(OUT)).alias(OUT))
+            f = Synth().fit(pe, unit=UNIT, time=TIME, outcome=OUT,
+                            treated=TREATED, treatment_time=t0)
+            with warnings.catch_warnings():       # o aviso é o assunto do ato
+                warnings.simplefilter("ignore", UserWarning)
+                return conformal_pvalue(f, permutation_type="block"), f.att_
+
+        print("desenho D, janela real 2013-2019 (5 pré / 7 pós):\\n")
+        print("   redução injetada      ATT        p (block)")
+        for eff in (0.0, -0.10, -0.25, -0.50, -0.75, -0.90):
+            pv, att = _p_com_efeito(panel_d, T0_VIGENCIA, eff)
+            seta = "" if eff == 0.0 else ("  <-- sobe" if pv > 0.75 else "")
+            print(f"     {abs(eff):>5.0%}            {att:+8.3f}      {pv:.4f}{seta}")
+        print("\\n   Uma queda de 90% na mortalidade é MENOS detectável que nenhuma.")
+""")
+)
+
+CELLS.append(
+    md("""
+    ### Por quê: o efeito fixo de janela inteira realoca o efeito
+
+    O teste conformal do CWZ não usa os pesos do ajuste pré. Ele **refaz** o
+    ajuste sobre a janela inteira sob o nulo, e com `fixedeff=True` (o padrão,
+    fiel ao `augsynth` do R) esse refit recentra cada unidade na sua média de
+    janela inteira.
+
+    Esse recentramento não é neutro. Um efeito constante $\\delta$ no pós move a
+    média de janela inteira da tratada em $\\delta\\,T_1/T$, então subtrair a
+    média **divide o efeito entre os dois blocos**:
+
+    $$
+    r_{\\text{pós}} = \\delta\\,\\frac{T_0}{T},
+    \\qquad
+    r_{\\text{pré}} = -\\delta\\,\\frac{T_1}{T},
+    \\qquad\\Longrightarrow\\qquad
+    \\frac{|r_{\\text{pré}}|}{|r_{\\text{pós}}|} = \\frac{T_1}{T_0}.
+    $$
+
+    A estatística do teste lê **só as posições do pós**. Com $T_0 = 5$ e
+    $T_1 = 7$, ela enxerga $5/12$ do efeito enquanto as rotações trazem para a
+    janela pontuada os resíduos do pré, que carregam $7/12$. Quanto maior o
+    efeito verdadeiro, mais forte fica a distribuição "nula" em relação ao
+    observado — e o p sobe.
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO11_OK:
+        # 2) A aritmética, conferida contra os resíduos de verdade.
+        pe = panel_d.with_columns(
+            pl.when((pl.col(UNIT) == TREATED) & (pl.col(TIME) >= T0_VIGENCIA))
+            .then(pl.col(OUT) * 0.10).otherwise(pl.col(OUT)).alias(OUT))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            f90 = Synth().fit(pe, unit=UNIT, time=TIME, outcome=OUT,
+                              treated=TREATED, treatment_time=T0_VIGENCIA)
+        r = f90.conformal_null_residuals(0.0)
+        n_pre = int(f90.pre_mask_.sum())
+        n_post = int((~f90.pre_mask_).sum())
+        obs = np.abs(r[:n_pre]).mean() / np.abs(r[n_pre:]).mean()
+        print(f"   injetando -90%,  T0={n_pre}  T1={n_post}")
+        print(f"   |resíduo| médio  pré = {np.abs(r[:n_pre]).mean():.4f}"
+              f"   pós = {np.abs(r[n_pre:]).mean():.4f}")
+        print(f"   razão observada = {obs:.4f}")
+        print(f"   razão prevista T1/T0 = {n_post / n_pre:.4f}")
+        print(f"   erro = {abs(obs - n_post / n_pre) / (n_post / n_pre):.2%}")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO11_OK:
+        # 3) Onde a inversão começa: varre o corte de T0 no MESMO painel.
+        print("p (block) por corte de T0 — painel D, T=12 anos\\n")
+        print("     T0    pré/pós |  efeito 0     -50%     -90%   | direção")
+        for t0 in (2017, 2016, 2015, 2014, 2013):
+            ps = [_p_com_efeito(panel_d, t0, e)[0] for e in (0.0, -0.50, -0.90)]
+            npre, npost = t0 - ANO_MIN, ANO_MAX - t0 + 1
+            marca = "INVERTIDO" if ps[-1] > ps[0] else "ok"
+            alvo = "  <-- o desenho deste notebook" if t0 == T0_VIGENCIA else ""
+            print(f"    {t0}     {npre}/{npost}   | " +
+                  "   ".join(f"{v:.4f}" for v in ps) + f"  | {marca}{alvo}")
+        print("\\n   Neste painel a inversão aparece só em 5/7 — o único corte com pós > pré.")
+        print("   Em 6/6 a razão T1/T0 vale 1: nenhum bloco domina, e o teste fica no fio.")
+        print("   A biblioteca avisa já em pós >= pré, porque na paridade não há margem.")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO11_OK:
+        # 4) A razão |pré|/|pós| é a evidência direta da realocação.
+        def _razao(efeito, fe):
+            pe2 = panel_d.with_columns(
+                pl.when((pl.col(UNIT) == TREATED) & (pl.col(TIME) >= T0_VIGENCIA))
+                .then(pl.col(OUT) * (1 + efeito)).otherwise(pl.col(OUT)).alias(OUT))
+            f = Synth(fixedeff=fe).fit(pe2, unit=UNIT, time=TIME, outcome=OUT,
+                                       treated=TREATED, treatment_time=T0_VIGENCIA)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                r = f.conformal_null_residuals(0.0)
+                pv_ = conformal_pvalue(f, permutation_type="block")
+            k = int(f.pre_mask_.sum())
+            return np.abs(r[:k]).mean() / np.abs(r[k:]).mean(), pv_, f.rmspe_pre_
+
+        alvo = (ANO_MAX - T0_VIGENCIA + 1) / (T0_VIGENCIA - ANO_MIN)
+        print(f"razão |resíduo| pré/pós do refit conformal   (alvo T1/T0 = {alvo:.3f})\\n")
+        print("   efeito |  fixedeff=True        |  fixedeff=False")
+        print("          |  razão      p         |  razão      p")
+        for eff in (0.0, -0.50, -0.90):
+            ra, pa, _ = _razao(eff, True)
+            rb, pb, rm = _razao(eff, False)
+            print(f"    {abs(eff):>4.0%}  |  {ra:.3f}    {pa:.4f}     |  {rb:.3f}    {pb:.4f}")
+        print(f"\\n   fixedeff=True : a razão CONVERGE para {alvo:.3f} — a realocação prevista.")
+        print("   fixedeff=False: a razão CAI para ~1,08 — o efeito fica no pós, correto.")
+        print(f"   Mas o p não desce mesmo assim: sem recentramento o ajuste pré piora")
+        print(f"   (RMSPE pré {rm:.2%} contra {s_d.rmspe_pre_:.2%}), e os resíduos do pré")
+        print("   continuam grandes por MÁ ADERÊNCIA em vez de por realocação.")
+        print("   Tirar o efeito fixo remove o mecanismo; não compra detecção.")
+
+    if ATO11_OK:
+        # 5) O sintoma, e a janela que de fato devolve poder ao teste.
+        efs = [0.0, -0.10, -0.25, -0.40, -0.50, -0.65, -0.75, -0.90]
+        xs = [abs(e) for e in efs]
+        p_57 = [_p_com_efeito(panel_d, T0_VIGENCIA, e)[0] for e in efs]
+        p_93 = [_p_com_efeito(panel_d, 2017, e)[0] for e in efs]
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.4))
+        ax1.plot(xs, p_57, "o-", color=COLOR_DONOR, lw=2.0, label="5 pré / 7 pós (este notebook)")
+        ax1.plot(xs, p_93, "o-", color=COLOR_AUGMENTED, lw=2.0, label="9 pré / 3 pós (T0=2017)")
+        ax1.axhline(0.10, color=COLOR_TEXT, ls="--", lw=0.9, alpha=0.6)
+        ax1.text(0.005, 0.13, "α = 0,10", color=COLOR_TEXT, fontsize=9)
+        ax1.axhline(1 / 12, color=COLOR_ALT, ls=":", lw=1.2)
+        ax1.text(0.60, 1 / 12 + 0.03, "piso 1/12", color=COLOR_ALT, fontsize=9)
+        ax1.set_ylim(-0.05, 1.05)
+        ax1.set_xlabel("Redução injetada na mortalidade")
+        ax1.set_ylabel("p conformal (block)")
+        ax1.set_title("O teste anda para trás na janela longa")
+        ax1.legend(loc="center left", fontsize=9)
+
+        r_fe = [_razao(e, True)[0] for e in efs]
+        r_sem = [_razao(e, False)[0] for e in efs]
+        ax2.plot(xs, r_fe, "o-", color=COLOR_DONOR, lw=2.0, label="fixedeff=True")
+        ax2.plot(xs, r_sem, "o-", color=COLOR_AUGMENTED, lw=2.0, label="fixedeff=False")
+        ax2.axhline(alvo, color=COLOR_TEXT, ls="--", lw=1.0)
+        ax2.text(0.005, alvo + 0.03, f"T1/T0 = {alvo:.2f}", color=COLOR_TEXT, fontsize=9)
+        ax2.axhline(1.0, color=COLOR_ALT, ls=":", lw=1.2)
+        ax2.text(0.005, 1.03, "paridade", color=COLOR_ALT, fontsize=9)
+        ax2.set_xlabel("Redução injetada na mortalidade")
+        ax2.set_ylabel("|resíduo| médio  pré / pós")
+        ax2.set_title("Para onde o refit manda o efeito")
+        ax2.legend(loc="center right", fontsize=9)
+        plt.tight_layout(); plt.show()
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O que o Ato 11 muda
+
+    **Os p-valores conformais deste notebook não são leitura de evidência.** Todo
+    p em bloco reportado nos Atos 5, 9 e 10 vem de uma janela 5/7 com
+    `fixedeff=True` — exatamente o regime invertido. O 0,750 do desenho D não diz
+    "o efeito é indistinguível de zero"; ele diz que o teste, neste desenho, não
+    consegue dizer nada. Um efeito de −90% produziria 0,917.
+
+    **A conclusão substantiva do Ato 10 sobrevive, com outra justificativa.**
+    Continua correto que o notebook não estabelece efeito causal da NR-35 — mas o
+    sustento disso são os **placebos in-space** do Ato 5 (que não refazem ajuste e
+    não sofrem esta inversão) e a instabilidade do leave-one-out do Ato 7, não o p
+    conformal.
+
+    **Duas coisas separadas, que é fácil confundir.** A realocação pelo efeito
+    fixo é exata e some quando se passa `fixedeff=False` — a razão |pré|/|pós|
+    cai de 1,40 para ~1,08. Mas *neste painel* isso não devolve poder: sem o
+    recentramento o ajuste pré piora (RMSPE 6,48% contra 5,49%) e os resíduos do
+    pré seguem grandes, agora por má aderência em vez de realocação. Tirar o
+    efeito fixo remove o mecanismo; não compra detecção. O que devolve poder aqui
+    é encurtar a janela.
+
+    **O que fazer em um desenho de verdade**, em ordem de preferência:
+
+    1. **Encurtar a janela de avaliação.** Com 9 pré / 3 pós o teste volta a
+       funcionar e chega ao piso de $1/12 \\approx 0{,}083$ já com −50%. Avaliar
+       2013–2015 responde uma pergunta mais estreita, mas responde.
+    2. **Alongar o pré-período** — a issue de recuar antes de 2008. É o único
+       caminho que preserva a janela de 7 anos *e* tira o desenho do regime
+       invertido, porque mexe em $T_0$, que é o denominador da razão.
+    3. **Placebo-in-space**, que não refaz ajuste e é imune a isto. Já está no
+       Ato 5, e passa a ser o instrumento principal, não o secundário.
+    4. **`fixedeff=False`** só quando o desenho tolera perder o recentramento por
+       unidade *e* o ajuste pré aguenta — as duas condições, não uma.
+
+    Desde esta versão a biblioteca emite um `UserWarning` quando
+    `n_post >= n_pre` com `fixedeff=True`, para que ninguém leia um p grande como
+    ausência de efeito sem ser avisado. O aviso dispara na paridade, e não só em
+    pós > pré, porque em $T_1 = T_0$ a razão já vale 1 e não sobra margem. O
+    mecanismo está em `docs/methodology.md` §5.6.
 """)
 )
 

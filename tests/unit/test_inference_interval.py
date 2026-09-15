@@ -117,13 +117,18 @@ def test_empty_acceptance_region_returns_nan_nan():
     # the peak p(h0) = 2/60 ~ 0.033 < 0.05 and NO grid point (nor 0.0) is
     # accepted -> the acceptance region is empty.
     #
+    # t0 = 40 keeps the pre-period longer than the post one, so this exercises the
+    # empty-region path without also tripping the post-dominated-window warning
+    # (a distinct failure mode, covered in test_inference_core). The mechanism is
+    # driven by T and the ramp, not by the split: the region is empty either way.
+    #
     # This is the opposite regime from the small-T (T <= 1/alpha) case, where the
     # 1/T floor keeps p(h0) >= alpha at every h0 -> an *unbounded* region and the
     # truncation guard, never (nan, nan). Deterministic (no RNG): peak p is fixed
     # by the block ranking and sits well below alpha, so the empty result is
     # stable across grid sizes.
     T = 60  # noqa: N806
-    t0 = 30
+    t0 = 40  # pre-dominated: the post-dominated-window warning is a separate regime
     base = np.linspace(1.0, 2.0, T)
     idx = np.arange(T) - t0
     ramp = np.where(idx >= 0, idx * 50.0, 0.0)  # steep, non-constant post divergence
