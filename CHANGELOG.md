@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/methodology.md` gains §5.6 for the above; the former §5.6 and §5.7
   shift to §5.7 and §5.8.
+- `tests/validation_against_r/test_conformal.py` silences the new warning at
+  module level: the canonical `GeoLift_PreTest` window (90 days split at
+  2021-02-15) is exactly 45 pre / 45 post, so every `fixedeff=True` fit on it
+  is on the boundary. Those are parity tests — both implementations compute
+  the same quantity in the same regime, which is the assertion — so the
+  diagnostic is expected there. `test_power.py` is unaffected (15 post
+  against 74-75 pre) and the Basque fixtures use `fixedeff=False`.
 - `tests/unit/test_inference_interval.py::test_empty_acceptance_region_returns_nan_nan`
   now splits its `T = 60` panel at `t0 = 40` instead of `t0 = 30`. The test's
   mechanism is driven by `T` and the post-period ramp, not by the split (the

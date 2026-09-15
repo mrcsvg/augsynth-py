@@ -614,6 +614,15 @@ that does not expose it never triggers the diagnostic. The guard fires at parity
 ($T_1 \ge T_0$) rather than strictly past it, because at $T_1 = T_0$ the ratio
 is already 1 and there is no margin left.
 
+**The canonical `GeoLift_PreTest` conformal fixture sits exactly on this
+boundary.** Its 90-day panel split at 2021-02-15 is 45 pre / 45 post, so every
+`fixedeff=True` fit on it emits the guard. That is the fixture's window choice,
+not a typical geo-experiment: a real GeoLift design evaluates a short treatment
+window against a long pre-period (the power parity test here uses 15 post
+against 74-75 pre) and stays far from the boundary. The R-parity tests silence
+the warning at module level — both implementations compute the same quantity in
+the same regime, which is what those tests assert.
+
 **`fixedeff=False` is not automatically the remedy.** It does remove this
 mechanism — on the NR-35 panel the residual ratio falls from 1.400 to ~1.084 as
 the injected effect grows, i.e. the effect stays in the post block where it
