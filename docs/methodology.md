@@ -573,7 +573,60 @@ envelope of the acceptance region rather than as a connected interval.
 Parity is pinned by `test_basque_pvalue_curve_matches_r_exact` in
 [`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py).
 
-### 5.6 Cost note for `geoexp`
+### 5.6 Post-dominated windows invert the test under `fixedeff=True`
+
+The refit of §5.1 spans the **whole** window, and with `fixedeff=True` (the
+default, matching R `augsynth`) it re-centres each unit on its full-window mean.
+That re-centring is not neutral with respect to the effect being tested.
+
+Let $\delta$ be a constant post-period effect, $T_0$ the pre-period length,
+$T_1$ the post-period length and $T = T_0 + T_1$. The treated unit's
+full-window mean moves by $\delta T_1 / T$, so subtracting it splits the effect
+across the two blocks:
+
+$$
+r_{\mathrm{post}} \;=\; \delta \, \frac{T_0}{T},
+\qquad
+r_{\mathrm{pre}} \;=\; -\,\delta \, \frac{T_1}{T},
+\qquad\Longrightarrow\qquad
+\frac{|r_{\mathrm{pre}}|}{|r_{\mathrm{post}}|} \;=\; \frac{T_1}{T_0} .
+$$
+
+The statistic $S_q$ of §5.2 scores the post positions only. Once
+$T_1 \ge T_0$ it is therefore reading the *smaller* share of the effect, while
+the permuted blocks — which rotate pre-period positions into the scored window
+— pick up the *inflated* share. Power does not merely degrade: it runs
+backwards, and the p-value can rise monotonically with the true effect. **A
+large p-value in this regime is not evidence against a large effect.**
+
+Verified on the NR-35 panel of `notebooks/04_nr35_trabalho_em_altura.ipynb`
+($T_0 = 5$, $T_1 = 7$, 18 donors): injecting reductions of 25 %, 50 %, 75 % and
+90 % into the treated series moves the block p-value from 0.750 to 0.833, 0.917,
+0.917 and 0.917 — up, not down. The observed residual ratio is 1.400 against a
+predicted $T_1/T_0 = 7/5 = 1.400$. On simulated panels the inversion appears at
+every donor-pool size from 2 to 30, so the donor pool is not the moderator;
+`fixedeff=False` on the same panels removes it entirely.
+
+Both conditions are necessary, and together they are what
+`_warn_if_post_dominated` checks before emitting a `UserWarning`: `fixedeff` is
+read off the fitted estimator with a `False` default, so a third-party estimator
+that does not expose it never triggers the diagnostic. The guard fires at parity
+($T_1 \ge T_0$) rather than strictly past it, because at $T_1 = T_0$ the ratio
+is already 1 and there is no margin left.
+
+**`fixedeff=False` is not automatically the remedy.** It does remove this
+mechanism — on the NR-35 panel the residual ratio falls from 1.400 to ~1.084 as
+the injected effect grows, i.e. the effect stays in the post block where it
+belongs — but it also drops the re-centring the pre-period fit relies on there
+(pre-period RMSPE 6.48 % against 5.49 % with it), so the pre-period residuals
+remain large for a different reason and the test still does not reject. The
+remedies that change the ratio itself are the reliable ones: shorten the
+evaluation window ($T_1 \downarrow$) or lengthen the pre-period
+($T_0 \uparrow$). On the same panel a 9/3 split reaches the $1/T$ floor at a
+50 % injected reduction. Placebo-in-space inference uses no refit and is
+unaffected either way.
+
+### 5.7 Cost note for `geoexp`
 
 Because inference now refits the synthetic control once per $h_0$ (≈ `grid_size`
 refits per CI), conformal inference is **no longer cheap**. The earlier
@@ -588,7 +641,7 @@ grid of $h_0$. A power simulation needs only a p-value at a single $h_0$
 fit — two fits per simulation, not `grid_size`. The power loop is therefore
 viable on the exact CWZ path; it is `conformal_interval` that is expensive.
 
-### 5.7 Null-distribution exposure and p-value adjustment
+### 5.8 Null-distribution exposure and p-value adjustment
 
 **`conformal_test` — the intermediate between residuals and p-value.**
 `conformal_pvalue` collapses the permutation test to a scalar; `conformal_test`

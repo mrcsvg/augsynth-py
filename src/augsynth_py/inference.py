@@ -57,6 +57,11 @@ class _FittedSC(Protocol):
     att_ : float
         Mean post-treatment gap (the point estimate of the ATT); the CI grid
         centre.
+    fixedeff : bool, optional
+        Whether the estimator re-centres units on their mean. Not required by
+        the Protocol: it is read with a ``False`` default purely to decide
+        whether :func:`_warn_if_post_dominated` applies, so a third-party
+        estimator that omits it simply never triggers that diagnostic.
 
     Methods
     -------
@@ -116,6 +121,63 @@ def _post_statistic(
     if side == "left":
         return float(-np.sum(post))
     raise ValueError(f"Unknown side {side!r}; expected 'two-sided', 'left', or 'right'.")
+
+
+def _warn_if_post_dominated(fit: _FittedSC, post_mask: NDArray[np.bool_]) -> None:
+    r"""Warn when a full-window fixed effect can invert the CWZ test.
+
+    ``conformal_null_residuals`` refits over the **entire** window, and with
+    ``fixedeff=True`` that refit re-centres each unit on its full-window mean.
+    A constant post-period effect :math:`\delta` moves the treated unit's
+    full-window mean by :math:`\delta \, T_1 / T`, so after re-centring the
+    effect is split across the two blocks:
+
+    .. math::
+
+        r_{\mathrm{post}} = \delta \, T_0 / T, \qquad
+        r_{\mathrm{pre}}  = -\delta \, T_1 / T,
+
+    hence :math:`|r_{\mathrm{pre}}| / |r_{\mathrm{post}}| = T_1 / T_0`
+    exactly. The statistic :math:`S_q` reads the post positions only, so once
+    :math:`T_1 \ge T_0` it sees the *smaller* share of the effect while the
+    permuted blocks pick up the inflated pre-period residuals. The test then
+    loses power in the wrong direction: its p-value can rise monotonically with
+    the true effect, so a large p-value is not evidence against a large effect.
+
+    Both conditions are necessary. With ``fixedeff=False`` there is no
+    re-centring, the effect stays in the post residuals, and the same
+    post-dominated split behaves correctly. The donor pool is not involved: the
+    inversion reproduces on simulated panels from 2 to 30 donors.
+
+    Design around it by shortening the evaluation window or lengthening the
+    pre-period — both change :math:`T_1 / T_0` itself. ``fixedeff=False``
+    removes this mechanism but is not automatically a remedy: it also drops the
+    re-centring, so on a panel whose pre-period fit depends on it the residuals
+    stay large for a different reason and the test still cannot reject.
+    Placebo-in-space inference uses no refit and is unaffected.
+    """
+    if not getattr(fit, "fixedeff", False):
+        return
+    n_post = int(np.count_nonzero(post_mask))
+    n_pre = int(post_mask.shape[0]) - n_post
+    if n_post < n_pre:
+        return
+    warnings.warn(
+        f"conformal inference on a post-dominated window ({n_pre} pre-period(s), "
+        f"{n_post} post) with fixedeff=True: the CWZ refit re-centres on the "
+        "full-window mean, which splits a constant effect between the blocks in "
+        "the ratio n_post:n_pre. The statistic scores the post positions only, "
+        "so at n_post >= n_pre it reads the smaller share while the permuted "
+        "blocks pick up the inflated pre-period residuals. The test can then "
+        "lose power in the WRONG direction — its p-value rising with the true "
+        "effect — so a large p-value here is not evidence against a large "
+        "effect. Shorten the evaluation window or lengthen the pre-period; "
+        "fixedeff=False removes this specific mechanism but need not restore "
+        "power, since it also drops the re-centring the pre-period fit relies "
+        "on. Placebo-in-space inference uses no refit and is unaffected.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def _permutation_distribution(
@@ -403,6 +465,7 @@ def conformal_test(
     statistic, null_distribution, observed_included = _permutation_distribution(
         residuals, post_mask, side, permutation_type, block_size, ns, rng
     )
+    _warn_if_post_dominated(fit, post_mask)
     return ConformalTestResult(
         pvalue=_pvalue_from_distribution(statistic, null_distribution, observed_included),
         statistic=statistic,
@@ -519,9 +582,11 @@ def conformal_pvalue(
     """
     residuals = np.asarray(fit.conformal_null_residuals(h0), dtype=np.float64)
     post_mask = ~np.asarray(fit.pre_mask_, dtype=np.bool_)
-    return _permutation_pvalue(
+    pvalue = _permutation_pvalue(
         residuals, post_mask, side, permutation_type, ns, rng, block_size=block_size
     )
+    _warn_if_post_dominated(fit, post_mask)
+    return pvalue
 
 
 def conformal_interval(
