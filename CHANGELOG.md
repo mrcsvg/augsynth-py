@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Conformal inference now warns (`UserWarning`) on a **post-dominated
+  window** — `n_post >= n_pre` with `fixedeff=True`. In that regime the CWZ
+  full-window refit re-centres the treated unit on its full-window mean,
+  which splits a constant effect between the blocks in the ratio
+  `n_post : n_pre`; since the statistic scores the post positions only, it
+  reads the smaller share while the permuted blocks pick up the inflated
+  pre-period residuals. The test then loses power in the *wrong* direction —
+  its p-value rises monotonically with the true effect — so a large p-value
+  there is not evidence against a large effect. Verified on the NR-35 panel
+  (`T0 = 5`, `T1 = 7`): injected reductions of 25/50/75/90 % move the block
+  p-value 0.750 -> 0.833 -> 0.917 -> 0.917 -> 0.917, and the observed
+  pre/post residual ratio is 1.400 against a predicted `T1/T0 = 1.400`.
+  Both conditions are necessary: `fixedeff=False` removes the relocation on
+  the same panels (the residual ratio falls to ~1.08), and the donor pool is
+  not the moderator (reproduced from 2 to 30 donors). It is not automatically
+  a remedy, though — dropping the re-centring can degrade the pre-period fit
+  enough that the test still cannot reject; the reliable fixes change
+  `T1/T0` itself (shorter window, longer pre-period). See
+  `docs/methodology.md` §5.6. The check reads `fixedeff` off the fitted
+  estimator with a `False` default, so a third-party estimator that does not
+  expose it never triggers it, and it fires at parity rather than strictly
+  past it because at `T1 == T0` there is no margin left.
+
+### Changed
+
+- `docs/methodology.md` gains §5.6 for the above; the former §5.6 and §5.7
+  shift to §5.7 and §5.8.
+- `tests/validation_against_r/test_conformal.py` silences the new warning at
+  module level: the canonical `GeoLift_PreTest` window (90 days split at
+  2021-02-15) is exactly 45 pre / 45 post, so every `fixedeff=True` fit on it
+  is on the boundary. Those are parity tests — both implementations compute
+  the same quantity in the same regime, which is the assertion — so the
+  diagnostic is expected there. `test_power.py` is unaffected (15 post
+  against 74-75 pre) and the Basque fixtures use `fixedeff=False`.
+- `tests/unit/test_inference_interval.py::test_empty_acceptance_region_returns_nan_nan`
+  now splits its `T = 60` panel at `t0 = 40` instead of `t0 = 30`. The test's
+  mechanism is driven by `T` and the post-period ramp, not by the split (the
+  acceptance region is empty at either), and the pre-dominated split keeps it
+  out of the regime the new warning flags.
+
 ## [0.5.0] - 2026-08-30
 
 The accepted bundle of `docs/power-api-contract-review.md`, freezing the

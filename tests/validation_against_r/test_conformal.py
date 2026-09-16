@@ -61,6 +61,15 @@ TREATED_UNIT = "new york"
 TREATMENT_DATE = date(2021, 2, 15)
 TREATMENT_DATE_R = "2021-02-15"
 
+# That 45/45 split sits exactly on the post-dominated boundary of
+# methodology.md §5.6, so every fixedeff=True fit below emits the guard's
+# UserWarning. These are R-parity tests: what they assert is that Python and R
+# agree on the same quantity, and both are computing it in that regime, so the
+# diagnostic is expected here rather than a defect to fix. It is silenced at
+# module level (pyproject sets filterwarnings = ["error"]). The Basque fixtures
+# further down use fixedeff=False and cannot emit it either way.
+pytestmark = pytest.mark.filterwarnings("ignore:conformal inference on a post-dominated window")
+
 
 def _panel_with_date(panel: pl.DataFrame) -> pl.DataFrame:
     """Parse the GeoLift ``date`` character column to a real Date."""
