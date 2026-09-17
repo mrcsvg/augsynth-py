@@ -14,12 +14,16 @@ O notebook `04_nr35_trabalho_em_altura.ipynb` procura, nesta ordem:
    **Não são dados do AEAT** — magnitudes apenas calibradas na ordem de
    grandeza publicada. O notebook sinaliza em destaque quando roda neste modo.
 
-## Por que o CSV real não está commitado
+## Quando o pipeline não consegue rodar
 
-Esta sessão de desenvolvimento roda atrás de um proxy com allowlist estrita
-(registries de pacotes + GitHub); `www.gov.br` e espelhos (dados.gov.br,
-web.archive.org, basedosdados) são bloqueados, e as tabelas do AEAT são
-arquivos `.xls` binários — inacessíveis também pelas ferramentas de fetch
+O `aeat_nr35_panel.csv` **está commitado** desde a execução completa do
+pipeline contra o gov.br. O que segue vale para quem tentar regenerá-lo.
+
+Sessões de desenvolvimento atrás de um proxy com allowlist estrita (registries
+de pacotes + GitHub) não alcançam a fonte: `www.gov.br` e espelhos
+(dados.gov.br, web.archive.org, basedosdados) são recusados, e desde 2026-09-17
+os hosts do IBGE (`concla`, `cnae`, `ftp`, `servicodados`) também. As tabelas do
+AEAT são `.xls` binários, inacessíveis também pelas ferramentas de fetch
 textuais. A extração alternativa via PDF (993 p./edição) foi descartada por
 risco de atribuição: há 34–56 tabelas de layout idêntico por edição
 (Brasil/regiões/UFs) e os extratores de trechos não preservam o título da
@@ -111,3 +115,67 @@ precisão, e poucas classes têm incidência suprimida. Para classes suprimidas
   (piso documentado no script); divisões minúsculas só adicionam ruído.
 - Desfecho: taxa de mortalidade (óbitos por 100 mil vínculos), não contagem —
   sem normalizar, o ciclo de emprego da construção se disfarça de efeito.
+
+## Por que o painel começa em 2008 — e por que não recua (issue #25)
+
+Levantado em 2026-09-17. A pergunta era dobrar `T0` de 5 para ~10 recuando o
+painel para ~2003. **Não dá; o AEAT deixa recuperar exatamente um ano, 2007.**
+
+### As duas quebras de 2007 coincidem
+
+A CNAE 2.0 passa a valer no CNPJ em **01/01/2007** (IN SRF 700/2006, Resoluções
+Concla 1 e 2/2006); o **NTEP** entra em **abril de 2007**. Qualquer ano anterior
+a 2007 atravessa as duas ao mesmo tempo, então a hipótese do issue — "o NTEP
+pode ser inócuo para óbitos, logo dá para recuar" — não é decisiva mesmo se
+verdadeira: o ano anterior está em outra classificação.
+
+### O remapeamento CNAE 1.0 → 2.0 não fecha no nível do painel
+
+A correspondência oficial do Concla é **por classe**, e as classes se dividem.
+O AEAT publica agregados por classe, não microdado, então só é remapeável a
+classe da 1.0 que cai **inteira** dentro de uma seção da 2.0. Exemplos que
+atingem doadores deste painel, lidos da tabela de correspondência:
+
+| Seção CNAE 2.0 (doador) | de onde vem na CNAE 1.0 |
+|---|---|
+| E — Água, esgoto e resíduos | água (seção E) + `90.00-0` esgoto/limpeza urbana (seção O) + `37` reciclagem (seção D) + `45.50-0` entulho de obra (seção F) |
+| J — Informação e comunicação | `22` edição (seção D) + `64.20-3` telecom (seção I) + `72` informática (seção K) + rádio/TV (seção O) |
+| F — Construção (a tratada) | `45` inteira, **menos** `45.50-0` → `38.11-4` (entulho vai para a seção E) |
+
+A tratada quase escapa; a maior parte do pool de doadores, não. Um doador
+remendado é tão fatal quanto uma tratada remendada — ele entra nos pesos.
+
+### O portal não publica as edições anteriores a 2008
+
+O índice do MPS lista, em 16/09/2026, de 2024 até **2008** (`.../aeat-2008`,
+"Texto online"). As edições 2000–2007 existem como publicação — o AEAT começou
+em 2000 — mas não estão linkadas ali.
+
+### Receita para o único ano recuperável (2007)
+
+Não executada: esta sessão roda atrás de uma política de egresso que recusa
+`www.gov.br` e todos os hosts do IBGE (403 no CONNECT). Rode de uma rede com
+acesso.
+
+- **Óbitos 2007** — tabela 29.1 da **edição 2009**, que pela regra "ano da
+  edição mais os dois anteriores" carrega 2007, 2008 e 2009. O ZIP já está em
+  `ZIP_URLS[2009]` no `_fetch_aeat_nr35.py`; o pipeline hoje descarta o 2007.
+  Basta acrescentar `2009: {"years": (2007, 2008, 2009), ...}` a `EDITIONS` e
+  deduplicar contra a edição 2010.
+- **Vínculos 2007** — capítulo 59 da **edição 2008** (`59.1` = 2007). Essa
+  edição não tem ZIP; serve `.xls` soltos a partir da página da seção II
+  (`.../aeat-2008/aeat-2008-secao-ii-c2-96-indicadores-de-acidentes-do-trabalho`).
+  É o único pedaço que exige código novo.
+
+2007 fica meio NTEP (abril). Isso é ressalva a declarar, não impedimento: o
+denominador vem de `registrados × 1000 / incidência` **dentro da mesma edição**,
+então uma mudança na definição de *registrado* se cancela na razão.
+
+### O que esse ano compra — e o que não compra
+
+Ver o **Ato 12** do notebook, que mede tudo isto no painel real. Em resumo:
+com `T0 = 6` e a janela de avaliação encurtada para 2013–2017 (`T1 = 5`), o
+desenho sai do regime invertido e o piso do p-valor cai de `1/9 ≈ 0,111` para
+`1/11 ≈ 0,091` — a primeira configuração deste painel em que um p abaixo de 10%
+é aritmeticamente possível. Não muda o poder: o MDE segue na casa de −65%
+adicional contra ~24% observados.

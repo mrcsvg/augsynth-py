@@ -1421,9 +1421,11 @@ CELLS.append(
     1. **Encurtar a janela de avaliação.** Com 9 pré / 3 pós o teste volta a
        funcionar e chega ao piso de $1/12 \\approx 0{,}083$ já com −50%. Avaliar
        2013–2015 responde uma pergunta mais estreita, mas responde.
-    2. **Alongar o pré-período** — a issue de recuar antes de 2008. É o único
-       caminho que preserva a janela de 7 anos *e* tira o desenho do regime
-       invertido, porque mexe em $T_0$, que é o denominador da razão.
+    2. **Alongar o pré-período** — a issue de recuar antes de 2008. Mexe em
+       $T_0$, que é o denominador da razão, e seria o único caminho a preservar
+       a janela de 7 anos. *O Ato 12 foi atrás dele e ele não existe:* o AEAT só
+       deixa recuperar 2007, o que dá $T_0 = 6$ contra $T_1 = 7$ — ainda
+       invertido. Antes disso a série está em CNAE 1.0.
     3. **Placebo-in-space**, que não refaz ajuste e é imune a isto. Já está no
        Ato 5, e passa a ser o instrumento principal, não o secundário.
     4. **`fixedeff=False`** só quando o desenho tolera perder o recentramento por
@@ -1434,6 +1436,231 @@ CELLS.append(
     ausência de efeito sem ser avisado. O aviso dispara na paridade, e não só em
     pós > pré, porque em $T_1 = T_0$ a razão já vale 1 e não sobra margem. O
     mecanismo está em `docs/methodology.md` §5.6.
+""")
+)
+
+# --- Ato 12 ----------------------------------------------------------------
+CELLS.append(
+    md("""
+    ## Ato 12 — Até onde o pré-período pode ir, e o que ele compra
+
+    O Ato 11 fechou recomendando **alongar o pré-período** como o caminho que
+    preservaria a janela de 7 anos *e* tiraria o desenho do regime invertido.
+    Este ato foi atrás desse caminho. Ele não existe — e o caminho que existe é
+    bem menor, e vale por um motivo diferente do que o Ato 11 supôs.
+
+    Três perguntas, em ordem:
+
+    1. Encurtar o **pós** resolve? (Não precisa de dado novo — dá para medir aqui.)
+    2. Se resolve, o desenho passa a detectar o efeito que de fato se observa?
+    3. Quanto pré-período o AEAT permite recuperar, na prática?
+""")
+)
+
+CELLS.append(
+    code("""
+    ATO12_OK = ATO11_OK
+    if ATO12_OK:
+        # 1) Varre o ano final da janela, mantendo o pré fixo em 2008-2012.
+        #    O p mínimo atingível pelo esquema de deslocamento cíclico é 1/T:
+        #    são T deslocamentos, a identidade entre eles, e ela sempre empata
+        #    consigo mesma. Nenhum desenho produz p abaixo disso.
+        print("pré fixo em 2008-2012; varre o ano final do pós:\\n")
+        print("   janela        T0  T1   T   invertido   p mínimo   p observado")
+        grade = []
+        for ano_max in range(2014, ANO_MAX + 1):
+            pe = panel_d.filter(pl.col(TIME) <= ano_max)
+            f = Synth().fit(pe, unit=UNIT, time=TIME, outcome=OUT,
+                            treated=TREATED, treatment_time=T0_VIGENCIA)
+            n_pre = int(f.pre_mask_.sum())
+            n_tot = int(f.pre_mask_.shape[0])
+            n_post = n_tot - n_pre
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                pv = conformal_pvalue(f, permutation_type="block")
+            grade.append((ano_max, n_pre, n_post, n_tot, pv))
+            marca = "SIM" if n_post >= n_pre else "não"
+            print(f"   2008-{ano_max}   {n_pre:>4}{n_post:>4}{n_tot:>4}   {marca:>9}"
+                  f"   {1 / n_tot:>8.4f}   {pv:>11.4f}")
+        print("\\n   O aviso da biblioteca dispara nas duas últimas linhas.")
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O pós curto tira a inversão — e esbarra no piso
+
+    Encurtar o pós funciona: em 2008–2016 o desenho volta a ter $T_1 < T_0$ e sai
+    do regime do Ato 11. Mas trocou um problema por outro. O p-valor do esquema
+    de deslocamento cíclico vive na grade $\\\\{1/T, 2/T, \\\\dots, 1\\\\}$, e cortar o
+    pós **encurta a janela inteira**: o piso $1/T$ sobe de $1/12 \\\\approx 0{,}083$
+    para $1/9 \\\\approx 0{,}111$.
+
+    Ou seja: na única janela em que o teste funciona, **ele não consegue produzir
+    um p abaixo de 10%**, por mais forte que seja o efeito. Não é falta de
+    evidência; é falta de resolução aritmética.
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO12_OK:
+        # 2) Injeta reduções crescentes em cada janela e observa os três regimes.
+        EFEITOS = (0.0, -0.25, -0.50, -0.75, -0.90)
+        curvas = {}
+        print("p conformal em bloco por janela x redução injetada:\\n")
+        print("   janela        T0/T1   piso  " +
+              "".join(f"{e:>9.0%}" for e in EFEITOS))
+        for ano_max in (2014, 2016, 2017, ANO_MAX):
+            pe0 = panel_d.filter(pl.col(TIME) <= ano_max)
+            ps = []
+            for eff in EFEITOS:
+                pe = pe0.with_columns(
+                    pl.when((pl.col(UNIT) == TREATED) & (pl.col(TIME) >= T0_VIGENCIA))
+                    .then(pl.col(OUT) * (1 + eff)).otherwise(pl.col(OUT)).alias(OUT))
+                f = Synth().fit(pe, unit=UNIT, time=TIME, outcome=OUT,
+                                treated=TREATED, treatment_time=T0_VIGENCIA)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    ps.append(conformal_pvalue(f, permutation_type="block"))
+            n_pre = int(f.pre_mask_.sum())
+            n_tot = int(f.pre_mask_.shape[0])
+            curvas[ano_max] = (n_pre, n_tot - n_pre, n_tot, ps)
+            print(f"   2008-{ano_max}   {n_pre}/{n_tot - n_pre:<5}{1 / n_tot:>6.3f}  " +
+                  "".join(f"{p:>9.4f}" for p in ps))
+        print("\\n   T1 < T0 : p cai com o efeito e encosta no piso — o teste funciona.")
+        print("   T1 = T0 : cai e volta a subir — a realocação do Ato 11 começa.")
+        print("   T1 > T0 : sobe com o efeito — invertido.")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO12_OK:
+        fig, ax = plt.subplots(figsize=(7.6, 4.4))
+        xs = [abs(e) * 100 for e in EFEITOS]
+        estilos = {2014: (COLOR_SYNTH, "-"), 2016: (COLOR_TREATED, "-"),
+                   2017: (COLOR_AUGMENTED, "--"), ANO_MAX: (COLOR_DONOR, "--")}
+        for ano_max, (n_pre, n_post, n_tot, ps) in curvas.items():
+            cor, ls = estilos[ano_max]
+            ax.plot(xs, ps, "o", ls=ls, color=cor, lw=2.0,
+                    label=f"2008-{ano_max}  ({n_pre} pré / {n_post} pós)")
+            ax.axhline(1 / n_tot, color=cor, lw=0.8, ls=":", alpha=0.55)
+        ax.set_xlabel("Redução injetada na mortalidade da construção (%)")
+        ax.set_ylabel("p conformal (block)")
+        ax.set_title("Encurtar o pós devolve o teste; o piso 1/T fica no caminho",
+                     loc="left", fontsize=11)
+        ax.set_ylim(0, 1.0)
+        ax.grid(color=COLOR_GRID, lw=0.8)
+        ax.legend(fontsize=8.5, loc="center left")
+        plt.tight_layout(); plt.show()
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO12_OK:
+        # 3) Onde fica o MDE da melhor janela, e onde fica o efeito observado.
+        pe0 = panel_d.filter(pl.col(TIME) <= 2016)
+        f0 = Synth().fit(pe0, unit=UNIT, time=TIME, outcome=OUT,
+                         treated=TREATED, treatment_time=T0_VIGENCIA)
+        rel = f0.att_ / f0.synthetic_[~f0.pre_mask_].mean()
+        print(f"janela 2008-2016 (5 pré / 4 pós), piso {1 / 9:.4f}")
+        print(f"   efeito OBSERVADO: ATT {f0.att_:+.3f} sobre um contrafactual médio "
+              f"de {f0.synthetic_[~f0.pre_mask_].mean():.3f}  ->  {rel:+.1%}\\n")
+        print("   redução ADICIONAL injetada     p")
+        for eff in (-0.10, -0.20, -0.30, -0.40, -0.50, -0.60, -0.65, -0.75):
+            pe = pe0.with_columns(
+                pl.when((pl.col(UNIT) == TREATED) & (pl.col(TIME) >= T0_VIGENCIA))
+                .then(pl.col(OUT) * (1 + eff)).otherwise(pl.col(OUT)).alias(OUT))
+            g = Synth().fit(pe, unit=UNIT, time=TIME, outcome=OUT,
+                            treated=TREATED, treatment_time=T0_VIGENCIA)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                pv = conformal_pvalue(g, permutation_type="block")
+            piso = "  <-- piso" if abs(pv - 1 / 9) < 1e-9 else ""
+            print(f"          {abs(eff):>5.0%}                  {pv:.4f}{piso}")
+        mde = 0.65   # primeira redução adicional da grade acima que atinge o piso
+        print(f"\\n   MDE ~ {-mde:.0%} adicional, contra {rel:+.1%} observado: "
+              f"um fator de {mde / abs(rel):.1f}.")
+""")
+)
+
+CELLS.append(
+    md("""
+    ### Quanto pré-período o AEAT deixa recuperar
+
+    A resposta curta é **um ano**, e não dez.
+
+    **A CNAE 2.0 e o NTEP quebram a série no mesmo ponto.** A CNAE 2.0 passa a
+    valer no CNPJ em 01/01/2007; o NTEP entra em abril de 2007. Não há como
+    atravessar uma sem atravessar a outra, então a hipótese do issue — "o NTEP
+    pode não ter mexido na série de óbitos, então dá para recuar" — nunca chega a
+    ser decisiva: mesmo que o NTEP seja inócuo para óbitos, o ano anterior está em
+    outra classificação.
+
+    **E a classificação não fecha no nível que o painel usa.** A tabela oficial de
+    correspondência 1.0 × 2.0 do Concla remapeia por *classe*, não por seção, e as
+    classes se dividem. A seção E da CNAE 2.0 — Água, esgoto e resíduos, um doador
+    deste painel — se monta de quatro pedaços da 1.0: água (seção E), esgoto e
+    limpeza urbana (`90.00-0`, seção O), reciclagem (`37`, seção D) e retirada de
+    entulho de obra (`45.50-0`, seção F). A seção J vem de outros quatro. Como o
+    AEAT publica **agregados** por classe, e não microdado, só dá para remapear
+    onde cada classe da 1.0 cai inteira dentro de uma seção da 2.0 — e nos
+    doadores principais ela não cai. A construção quase escapa (1.0 `45` →
+    2.0 `41`+`42`+`43`), mas perde o `45.50-0` para a seção E.
+
+    **E o portal não publica as edições anteriores a 2008.** O índice do MPS
+    lista de 2008 em diante; as edições de 2000–2007 existem como publicação, mas
+    não estão linkadas.
+
+    **O que sobra: o ano de 2007.** Ele já está sob CNAE 2.0, e as duas metades do
+    dado são alcançáveis:
+
+    - **óbitos** — tabela 29.1 da **edição 2009** (ano da edição mais os dois
+      anteriores = 2007, 2008, 2009). Esse ZIP já está em `ZIP_URLS` no
+      `_fetch_aeat_nr35.py`; o pipeline hoje simplesmente descarta o 2007.
+    - **vínculos** — capítulo 59 da **edição 2008** (tabela `59.1` = 2007). Essa
+      edição não tem ZIP, mas serve os `.xls` soltos a partir da página da seção
+      II. É o único pedaço que exige código novo.
+
+    2007 fica meio NTEP (abril), o que é uma ressalva a declarar, não um
+    impedimento: o denominador é recuperado de `registrados × 1000 / incidência`
+    dentro da mesma edição, então uma mudança na definição de *registrado* se
+    cancela na razão.
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O que o Ato 12 muda
+
+    **O ponto 2 do Ato 11 estava errado.** Alongar o pré-período *não* preserva a
+    janela de 7 anos. Para $T_1 = 7$ sair da inversão é preciso $T_0 \\\\geq 8$, ou
+    seja um painel começando em 2005 — dois anos dentro da CNAE 1.0. Com o único
+    ano recuperável, 2007, o desenho vai a $T_0 = 6$ contra $T_1 = 7$: **continua
+    invertido**. Não existe versão disto que funcione com a janela inteira.
+
+    **Mas 2007 não é inútil — ele compra uma coisa específica.** Com $T_0 = 6$ e a
+    janela de avaliação encurtada para 2013–2017, dá $T_1 = 5 < T_0$ e $T = 11$,
+    logo piso $1/11 \\\\approx 0{,}091$. É a primeira configuração deste painel em
+    que **um p abaixo de 10% é aritmeticamente possível**. Hoje, com $T_0 = 5$,
+    toda janela não-invertida tem piso $\\\\geq 1/9 \\\\approx 0{,}111$.
+
+    **E mesmo assim o efeito observado fica fora de alcance.** Na melhor janela
+    atual o teste só encosta no piso com uma redução adicional de ~65%, contra
+    ~24% observados — um fator de quase três. Ganhar um ano de pré não muda essa
+    ordem de grandeza: muda o piso de 0,111 para 0,091, não o poder de detecção.
+
+    **A limitação central deste notebook, declarada.** O painel anual do AEAT tem
+    períodos demais de menos. Com a vigência em 2013 e o corte em 2019 (pré-COVID),
+    $T$ não passa de 12, e o teste conformal exato não produz p abaixo de $1/T$.
+    Para alcançar 5% seriam necessários $T \\\\geq 20$ períodos — o que, com um pós
+    de 7 anos, exigiria o painel inteiro desde 2000, a primeira edição do AEAT, e
+    atravessando as duas quebras de 2007. **Este desenho não tem como produzir
+    significância convencional.** É por isso que a conclusão do notebook se apoia
+    no placebo-in-space do Ato 5 e na instabilidade do leave-one-out do Ato 7 —
+    instrumentos que não dependem da grade $1/T$.
 """)
 )
 
