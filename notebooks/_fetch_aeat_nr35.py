@@ -125,6 +125,24 @@ INDICATOR_EDITIONS: dict[int, tuple[int, int]] = {
     2019: (2018, 2019),
 }
 
+# Why the panel starts in 2008, and the one year it could still gain (issue #25).
+# CNAE 2.0 takes effect in the CNPJ on 2007-01-01 and the NTEP in April 2007, so
+# every year before 2007 crosses BOTH breaks at once; the Concla 1.0 -> 2.0
+# correspondence is per class and splits several donor sections across four
+# CNAE 1.0 sections each, which aggregates cannot undo. The MPS index also links
+# no edition before 2008. That leaves 2007, and only 2007:
+#   * óbitos    - table 29.1 of the 2009 edition (edition year plus the two
+#                 before it), whose ZIP is already in ZIP_URLS above; add
+#                 2009: {"years": (2007, 2008, 2009), ...} to EDITIONS and
+#                 de-duplicate 2008-2009 against the 2010 edition.
+#   * vínculos  - chapter 59 of the 2008 edition (table 59.1 = 2007). That
+#                 edition has no ZIP; it serves loose .xls from its Seção II
+#                 page. This is the only piece needing new code.
+# What it buys is measured in Act 12 of the notebook: with T0 = 6 and the
+# evaluation window shortened to 2013-2017 the design leaves the inverted regime
+# and the p-value floor drops from 1/9 to 1/11. It does not change the MDE.
+# See _data/README-aeat.md for the full write-up.
+
 # CNAE 2.0 divisões (IBGE), short labels used as unit names in the panel.
 CNAE_DIVISOES: dict[str, str] = {
     "01": "01 Agricultura e pecuária",
