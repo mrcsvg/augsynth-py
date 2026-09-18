@@ -601,10 +601,16 @@ CELLS.append(
     md("""
     ## Ato 5 — É real? Conformal (CWZ 2021) + placebos in-space
 
-    > **Revisado pelo Ato 11.** Os p-valores conformais em bloco desta seção vêm
-    > de uma janela pós-dominada (5 pré / 7 pós), regime em que o teste anda para
-    > trás: o p sobe com o efeito verdadeiro. Não os leia como ausência de efeito.
-    > Os placebos in-space abaixo não têm esse problema. O texto fica como estava.
+    > **Revisado pelos Atos 11 e 13. Nenhum dos dois p-valores desta seção se lê
+    > como está.** Os conformais em bloco vêm de uma janela pós-dominada
+    > (5 pré / 7 pós), regime em que o teste anda para trás: o p sobe com o efeito
+    > verdadeiro (Ato 11). E o p placebo in-space de 0,579 vem de um ranking em que
+    > quatro dos dezoito doadores têm ajuste pré numericamente exato, então a razão
+    > deles é erro de arredondamento dividido por erro de arredondamento; com o
+    > filtro de ajuste comparável a leitura muda de lado **neste painel** — mas
+    > não no desenho D do Ato 10, e em nenhum dos dois ela chega a concluir
+    > (Ato 13). O texto
+    > abaixo fica como estava, para preservar o histórico.
 
     Dois instrumentos independentes:
 
@@ -1406,7 +1412,9 @@ CELLS.append(
     Continua correto que o notebook não estabelece efeito causal da NR-35 — mas o
     sustento disso são os **placebos in-space** do Ato 5 (que não refazem ajuste e
     não sofrem esta inversão) e a instabilidade do leave-one-out do Ato 7, não o p
-    conformal.
+    conformal. *Ressalva do Ato 13:* os placebos escapam desta inversão, mas o
+    ranking do Ato 5 tem um defeito próprio — precisa do filtro de ajuste pré
+    comparável para ser lido.
 
     **Duas coisas separadas, que é fácil confundir.** A realocação pelo efeito
     fixo é exata e some quando se passa `fixedeff=False` — a razão |pré|/|pós|
@@ -1492,9 +1500,9 @@ CELLS.append(
 
     Encurtar o pós funciona: em 2008–2016 o desenho volta a ter $T_1 < T_0$ e sai
     do regime do Ato 11. Mas trocou um problema por outro. O p-valor do esquema
-    de deslocamento cíclico vive na grade $\\\\{1/T, 2/T, \\\\dots, 1\\\\}$, e cortar o
-    pós **encurta a janela inteira**: o piso $1/T$ sobe de $1/12 \\\\approx 0{,}083$
-    para $1/9 \\\\approx 0{,}111$.
+    de deslocamento cíclico vive na grade $\\{1/T, 2/T, \\dots, 1\\}$, e cortar o
+    pós **encurta a janela inteira**: o piso $1/T$ sobe de $1/12 \\approx 0{,}083$
+    para $1/9 \\approx 0{,}111$.
 
     Ou seja: na única janela em que o teste funciona, **ele não consegue produzir
     um p abaixo de 10%**, por mais forte que seja o efeito. Não é falta de
@@ -1636,16 +1644,16 @@ CELLS.append(
     ### O que o Ato 12 muda
 
     **O ponto 2 do Ato 11 estava errado.** Alongar o pré-período *não* preserva a
-    janela de 7 anos. Para $T_1 = 7$ sair da inversão é preciso $T_0 \\\\geq 8$, ou
+    janela de 7 anos. Para $T_1 = 7$ sair da inversão é preciso $T_0 \\geq 8$, ou
     seja um painel começando em 2005 — dois anos dentro da CNAE 1.0. Com o único
     ano recuperável, 2007, o desenho vai a $T_0 = 6$ contra $T_1 = 7$: **continua
     invertido**. Não existe versão disto que funcione com a janela inteira.
 
     **Mas 2007 não é inútil — ele compra uma coisa específica.** Com $T_0 = 6$ e a
     janela de avaliação encurtada para 2013–2017, dá $T_1 = 5 < T_0$ e $T = 11$,
-    logo piso $1/11 \\\\approx 0{,}091$. É a primeira configuração deste painel em
+    logo piso $1/11 \\approx 0{,}091$. É a primeira configuração deste painel em
     que **um p abaixo de 10% é aritmeticamente possível**. Hoje, com $T_0 = 5$,
-    toda janela não-invertida tem piso $\\\\geq 1/9 \\\\approx 0{,}111$.
+    toda janela não-invertida tem piso $\\geq 1/9 \\approx 0{,}111$.
 
     **E mesmo assim o efeito observado fica fora de alcance.** Na melhor janela
     atual o teste só encosta no piso com uma redução adicional de ~65%, contra
@@ -1655,12 +1663,206 @@ CELLS.append(
     **A limitação central deste notebook, declarada.** O painel anual do AEAT tem
     períodos demais de menos. Com a vigência em 2013 e o corte em 2019 (pré-COVID),
     $T$ não passa de 12, e o teste conformal exato não produz p abaixo de $1/T$.
-    Para alcançar 5% seriam necessários $T \\\\geq 20$ períodos — o que, com um pós
+    Para alcançar 5% seriam necessários $T \\geq 20$ períodos — o que, com um pós
     de 7 anos, exigiria o painel inteiro desde 2000, a primeira edição do AEAT, e
     atravessando as duas quebras de 2007. **Este desenho não tem como produzir
     significância convencional.** É por isso que a conclusão do notebook se apoia
     no placebo-in-space do Ato 5 e na instabilidade do leave-one-out do Ato 7 —
     instrumentos que não dependem da grade $1/T$.
+""")
+)
+
+# --- Ato 13 ----------------------------------------------------------------
+CELLS.append(
+    md("""
+    ## Ato 13 — O placebo in-space do Ato 5 estava degenerado
+
+    Depois do Ato 11 o placebo in-space virou o instrumento **principal** deste
+    notebook: ele não refaz ajuste sob o nulo, então não sofre a inversão que
+    contaminou todo p conformal. Isso o torna o lugar menos confortável para ter
+    um defeito — e ele tem um.
+
+    O Ato 5 ranqueia as unidades pela razão
+
+    $$
+    \\text{razão}_i
+    = \\frac{\\mathrm{RMSPE}^{\\text{pós}}_i}{\\max(\\mathrm{RMSPE}^{\\text{pré}}_i,\\ 10^{-12})}
+    $$
+
+    e não filtra nada. O `max(\\cdot, 10^{-12})` existe para não dividir por zero,
+    mas ele não *resolve* a divisão por zero — só a adia, devolvendo uma razão de
+    até $10^{12}$. Com $T_0 = 5$ e 18 doadores, o simplex interpola várias
+    unidades **exatamente**, e a razão delas deixa de medir deslocamento pós para
+    medir o tamanho do erro de arredondamento no pré.
+""")
+)
+
+CELLS.append(
+    code("""
+    ATO13_OK = ATO10_OK
+    if ATO13_OK:
+        # 1) Quem são os degenerados. Refaz os placebos do Ato 5 guardando o pré.
+        def _rmspe(est, mascara):
+            return float(np.sqrt(np.mean(est.gap_[mascara] ** 2)))
+
+        def _placebos(p_base, tratada=TREATED, t0=T0_VIGENCIA):
+            \"\"\"Devolve (pré_tratada, razão_tratada, [(unidade, pré, razão), ...]).\"\"\"
+            alvo = Synth().fit(p_base, unit=UNIT, time=TIME, outcome=OUT,
+                               treated=tratada, treatment_time=t0)
+            pre_t = _rmspe(alvo, alvo.pre_mask_)
+            raz_t = _rmspe(alvo, ~alvo.pre_mask_) / pre_t
+            sem = p_base.filter(pl.col(UNIT) != tratada)   # tratada fora do pool
+            saida = []
+            for u in sorted(p_base[UNIT].unique().to_list()):
+                if u == tratada:
+                    continue
+                h = Synth().fit(sem, unit=UNIT, time=TIME, outcome=OUT,
+                                treated=u, treatment_time=t0)
+                pre = _rmspe(h, h.pre_mask_)
+                saida.append((u, pre, _rmspe(h, ~h.pre_mask_) / max(pre, 1e-12)))
+            return pre_t, raz_t, saida
+
+        PRE_TR, RAZAO_TR, PLACEBOS = _placebos(panel)
+        print(f"Construção: RMSPE pré = {PRE_TR:.4f}   razão pós/pré = {RAZAO_TR:.2f}\\n")
+        print("doador                             RMSPE pré    razão pós/pré   pré / pré_tratada")
+        for u, pre, r in sorted(PLACEBOS, key=lambda t: t[1]):
+            marca = "   <-- degenerado" if pre < PRE_TR / 100 else ""
+            print(f"   {u:31s} {pre:10.3e} {r:15.4g} {pre / PRE_TR:12.4f}{marca}")
+        n_deg = sum(1 for _, pre, _ in PLACEBOS if pre < PRE_TR / 100)
+        print(f"\\n   {n_deg} de {len(PLACEBOS)} doadores ajustam o pré com RMSPE 100x menor")
+        print("   que o da tratada — ou seja, interpolação exata a menos de arredondamento.")
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O filtro clássico está mirando na cauda errada
+
+    Abadie, Diamond & Hainmueller (2010) já descartam placebos pelo ajuste pré —
+    mas **só os ruins**: na aplicação da Califórnia eles cortam unidades com MSPE
+    pré acima de 2, 5 e 20 vezes o da tratada, porque um sintético que nem
+    reproduz o pré não diz nada sobre o pós.
+
+    Aqui o problema é o oposto. As quatro unidades que envenenam o ranking têm
+    ajuste pré **bom demais** — $10^4$ a $10^7$ vezes melhor que o da tratada — e
+    passam ileso por qualquer corte unilateral. O remédio precisa ser uma **faixa**:
+    manter só placebos cujo ajuste pré seja comparável ao da tratada nos dois
+    sentidos.
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO13_OK:
+        # 2) Os dois filtros lado a lado, varrendo o fator k.
+        def _p_placebo(sub, razao_tratada=None):
+            rt = RAZAO_TR if razao_tratada is None else razao_tratada
+            k = 1 + sum(1 for (_, _, r) in sub if r >= rt)
+            return k, len(sub) + 1, k / (len(sub) + 1)
+
+        KS = (100, 20, 10, 5, 3, 2)
+        print("            ADH unilateral (só corta pré ruim)      faixa bilateral")
+        print("    k        posição      p     n                 posição      p     n   piso 1/(n+1)")
+        curva = {}
+        for k in KS:
+            uni = [t for t in PLACEBOS if t[1] <= PRE_TR * k]
+            bi = [t for t in PLACEBOS if PRE_TR / k <= t[1] <= PRE_TR * k]
+            (a, na, pa), (b, nb, pb) = _p_placebo(uni), _p_placebo(bi)
+            curva[k] = (pa, pb, 1 / nb)
+            print(f"  {k:>3}      {a:2d}ª/{na:2d}   {pa:.4f}  {len(uni):2d}"
+                  f"                 {b:2d}ª/{nb:2d}   {pb:.4f}  {len(bi):2d}      {1 / nb:.4f}")
+        s, ns, ps = _p_placebo(PLACEBOS)
+        print(f"\\n   sem filtro (o que o Ato 5 faz): {s}ª/{ns}  p = {ps:.4f}")
+        print("\\n   O corte unilateral do ADH não move nada: os degenerados são")
+        print("   ajuste BOM, então ele os mantém. Só a faixa bilateral os remove.")
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO13_OK:
+        fig, ax = plt.subplots(figsize=(7.8, 4.4))
+        ks = list(KS)
+        ax.plot(ks, [curva[k][0] for k in ks], "o-", color=COLOR_DONOR, lw=2.0,
+                label="ADH unilateral (corta só pré ruim)")
+        ax.plot(ks, [curva[k][1] for k in ks], "o-", color=COLOR_TREATED, lw=2.2,
+                label="faixa bilateral (pré comparável)")
+        ax.plot(ks, [curva[k][2] for k in ks], ":", color=COLOR_TEXT, lw=1.2,
+                label="piso 1/(n+1) da faixa bilateral")
+        ax.axhline(ps, color=COLOR_SYNTH, ls="--", lw=1.0,
+                   label=f"sem filtro (Ato 5) = {ps:.3f}")
+        ax.set_xscale("log")
+        ax.set_xticks(ks); ax.set_xticklabels([str(k) for k in ks])
+        ax.invert_xaxis()
+        ax.set_xlabel("k — largura do filtro, em múltiplos do RMSPE pré da tratada")
+        ax.set_ylabel("p-valor placebo in-space")
+        ax.set_title("O corte clássico mira a cauda errada neste painel",
+                     loc="left", fontsize=11)
+        ax.set_ylim(0, 0.75)
+        ax.grid(color=COLOR_GRID, lw=0.8)
+        ax.legend(fontsize=8.5, loc="upper left")
+        plt.tight_layout(); plt.show()
+""")
+)
+
+CELLS.append(
+    code("""
+    if ATO13_OK:
+        # 3) O mesmo sobre o desenho D (Ato 10), que é o recomendado.
+        PRE_D, RAZAO_D, PLACEBOS_D = _placebos(panel_d)
+        print(f"desenho D — Construção: RMSPE pré = {PRE_D:.4f}  razão = {RAZAO_D:.2f}\\n")
+        print("    k     posição      p        n")
+        for k in (None, 20, 10, 5, 3):
+            sub = (PLACEBOS_D if k is None
+                   else [t for t in PLACEBOS_D if PRE_D / k <= t[1] <= PRE_D * k])
+            j = 1 + sum(1 for (_, _, r) in sub if r >= RAZAO_D)
+            rot = "sem" if k is None else f"{k:>3}"
+            print(f"  {rot:>4}     {j:2d}ª/{len(sub) + 1:2d}   {j / (len(sub) + 1):.4f}   {len(sub):2d}")
+        print("\\n   ATENÇÃO: aqui NÃO inverte. No painel liso o filtro leva a")
+        print("   Construção à 1ª posição; no desenho D ela para na 4ª de 7,")
+        print("   p = 0,571. A razão da própria Construção cai de 14,37 para 4,18")
+        print("   quando a divisão 07 sai do doador B — parte do que a fazia")
+        print("   excepcional no painel liso era Brumadinho, não a construção.")
+""")
+)
+
+CELLS.append(
+    md("""
+    ### O que o Ato 13 muda
+
+    **O p = 0,579 do Ato 5 não é leitura de evidência.** Ele é o ranking de uma
+    razão que, em quatro das dezoito unidades, é um erro de arredondamento
+    dividido por outro. Essas quatro ocupam o topo e empurram a construção para
+    a 11ª posição.
+
+    **No painel liso a leitura muda de lado; no desenho D, não.** Restringindo
+    a placebos com ajuste pré dentro de 5× do da tratada, a construção passa da
+    11ª de 19 para a **1ª de 6** no painel deste ato — mas o pool tem 5
+    placebos, e o menor p possível com 5 placebos é $1/6 \\approx 0{,}167$: ela
+    está *no piso*, não abaixo dele. Já no **desenho D do Ato 10**, que é o
+    recomendado, o mesmo filtro leva a construção só até a 4ª de 7
+    ($p = 0{,}571$), e a 2ª de 4 com $k = 3$. Nunca ao topo.
+
+    A diferença tem nome: a razão da própria construção cai de **14,37 para
+    4,18** quando a divisão 07 sai do doador B. Parte do que a fazia parecer
+    excepcional no painel liso era Brumadinho inflando um doador, não a
+    construção se deslocando.
+
+    **É $T_0 = 5$ de novo.** Com cinco períodos pré e dezoito doadores o simplex
+    interpola várias unidades exatamente. O mesmo fato que deixa a ridge inerte
+    (Ato 2), que prende o p conformal na grade $1/T$ (Ato 12) e que impede alongar
+    o pré (Ato 12, issue #25) também destrói o denominador do placebo. Quatro
+    sintomas, uma causa.
+
+    **O que fica valendo.** A conclusão substantiva do notebook **não muda**: ele
+    continua não estabelecendo efeito causal da NR-35. O que muda é a razão. Já
+    não é "os placebos dizem que o deslocamento da construção é banal" — é "o
+    desenho não tem placebos comparáveis suficientes para dizer qualquer coisa".
+    Mais fraco, e verdadeiro.
+
+    **Como reportar daqui em diante.** Um p placebo in-space sem o pré ao lado é
+    ininterpretável. Reporte sempre os três juntos: o RMSPE pré da tratada, o
+    tamanho do pool depois do filtro, e o piso $1/(n+1)$ que esse pool impõe.
 """)
 )
 
