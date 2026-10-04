@@ -28,6 +28,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Literal, Protocol
 
 import numpy as np
@@ -904,6 +905,25 @@ def adjust_pvalues(
         If ``pvalues`` is empty or not one-dimensional, contains values
         outside ``[0, 1]`` or non-finite values, or ``method`` is unknown.
 
+    Notes
+    -----
+    Conformal p-values are exact rationals — ``k/T`` under the block scheme,
+    ``(1 + k)/(1 + n)`` under the random ones — and a raw ``k/T`` that equals
+    :math:`\alpha` as a rational also compares equal to it as a float. Plain
+    floating-point adjustment loses that: Benjamini-Hochberg rounds ``m/j``
+    before multiplying, so ``p = 1/83`` at rank 20 of 83 gives
+    ``0.05000000000000001`` rather than ``0.05`` and silently fails a
+    ``p <= alpha`` rule, and Bonferroni/Holm products such as ``7 * (1/140)``
+    land an ulp off (below) the tie. To keep ties exact, each input is read as
+    the smallest-denominator rational (denominator up to :math:`10^6`) that
+    rounds back to it, the adjustment is carried out in exact rational
+    arithmetic, and the result is rounded once. On such grids an adjusted
+    value that equals :math:`\alpha` mathematically is ``== alpha`` in float.
+    Inputs with no small-denominator rational behind them are used at their
+    exact binary value, so the result is the correctly rounded adjustment of
+    the input floats. Either way it is within a few ulps of R's ``p.adjust``,
+    which computes in plain floating point.
+
     References
     ----------
     Holm, S. (1979). A Simple Sequentially Rejective Multiple Test Procedure.
@@ -921,24 +941,55 @@ def adjust_pvalues(
     if not np.all(np.isfinite(p)) or bool(np.any((p < 0.0) | (p > 1.0))):
         raise ValueError("pvalues must all be finite and in [0, 1].")
 
-    m = p.size
-    if method == "bonferroni":
-        return np.minimum(1.0, m * p)
-
-    if method not in ("holm", "bh"):
+    if method not in ("holm", "bonferroni", "bh"):
         raise ValueError(f"Unknown method {method!r}; expected 'holm', 'bonferroni', or 'bh'.")
 
+    # Exact rational arithmetic, rounded once at the end. Each multiplier
+    # (m, m - j, m/j) is an exact rational, so the only float error left is
+    # the final rounding — a tie with alpha stays a tie (see Notes).
+    exact = [_as_rational(float(x)) for x in p]
+    m = p.size
+    one = Fraction(1)
+    if method == "bonferroni":
+        return np.array([float(min(one, m * x)) for x in exact], dtype=np.float64)
+
     order = np.argsort(p, kind="stable")
-    ranked = p[order]
+    ranked = [exact[i] for i in order]
+    adjusted_sorted: list[Fraction] = [one] * m
     if method == "holm":
         # Step-down: (m - j) * p_(j) for ascending rank j = 0..m-1, made
         # monotone non-decreasing by a running maximum.
-        adjusted_sorted = np.minimum(1.0, np.maximum.accumulate((m - np.arange(m)) * ranked))
+        running = Fraction(0)
+        for j, x in enumerate(ranked):
+            running = max(running, (m - j) * x)
+            adjusted_sorted[j] = min(one, running)
     else:
         # Step-up: m/j * p_(j) for one-based rank j, made monotone by a
         # running minimum taken from the largest p downwards.
-        raw = ranked * (m / np.arange(1, m + 1))
-        adjusted_sorted = np.minimum(1.0, np.minimum.accumulate(raw[::-1])[::-1])
+        running = one
+        for j in range(m - 1, -1, -1):
+            running = min(running, ranked[j] * Fraction(m, j + 1))
+            adjusted_sorted[j] = running
     out = np.empty(m, dtype=np.float64)
-    out[order] = adjusted_sorted
+    out[order] = [float(x) for x in adjusted_sorted]
     return out
+
+
+# Largest denominator recovered from a float p-value. Block-scheme p-values
+# are k/T and random-scheme ones (1 + k)/(1 + n_perm); 10**6 covers any
+# realistic T or permutation count while keeping recovery unambiguous: two
+# rationals with denominators <= 10**6 differ by at least 1e-12, far above
+# the ~1e-16 relative error of the float that represents them.
+_MAX_PVALUE_DENOMINATOR = 10**6
+
+
+def _as_rational(x: float) -> Fraction:
+    """Return the simplest rational a float p-value stands for.
+
+    The smallest-denominator fraction (up to ``_MAX_PVALUE_DENOMINATOR``) that
+    rounds back to ``x`` exactly — ``1/140`` for ``1 / 140`` — or, if none
+    does, the float's own exact binary value.
+    """
+    exact = Fraction(x)
+    approx = exact.limit_denominator(_MAX_PVALUE_DENOMINATOR)
+    return approx if float(approx) == x else exact
