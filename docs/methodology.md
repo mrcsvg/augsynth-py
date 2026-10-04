@@ -691,6 +691,17 @@ returned in the input order. References: Holm (1979, *Scandinavian Journal of
 Statistics* 6(2), 65-70); Benjamini & Hochberg (1995, *JRSS-B* 57(1),
 289-300).
 
+*Exact ties with $\alpha$.* Conformal p-values are exact rationals ($k/T$ for
+the block scheme), so a raw p-value equal to $\alpha$ as a rational is also
+`== alpha` as a float. The adjusted value must keep that, or a tied
+detection silently fails the `p <= alpha` rule — plain floating-point BH,
+including R's, turns $p = 1/83$ at rank 20 of $m = 83$ into
+`0.05000000000000001`. `adjust_pvalues` therefore reads each input as the
+smallest-denominator rational (denominator $\le 10^6$) that rounds back to
+it, carries out the adjustment in exact rational arithmetic, and rounds
+once. This departs from `p.adjust` by at most a few ulps, well inside the
+parity tolerance (`tests/validation_against_r/test_adjust_pvalues.py`).
+
 ---
 
 ## 6. Power analysis (simulation-based, GeoLift-style)

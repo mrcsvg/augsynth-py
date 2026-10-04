@@ -50,6 +50,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   acceptance region is empty at either), and the pre-dominated split keeps it
   out of the regime the new warning flags.
 
+### Fixed
+
+- `adjust_pvalues` no longer pushes a mathematically tied adjusted p-value
+  past `alpha` (issue #29, scenario S4b). Raw conformal p-values are exact
+  rationals (`k/T` under the block scheme), and `k/T == alpha` holds in float
+  whenever it holds as a rational; the old floating-point adjustment broke
+  that. Benjamini-Hochberg rounded `m/j` before multiplying, so e.g.
+  `p = 1/83` at rank 20 of `m = 83` came out `0.05000000000000001` and
+  silently failed the `p <= alpha` rule — 1,389 such cases at
+  `alpha in {0.05, 0.10}` for `T <= 1000`, `m <= 200`. Bonferroni/Holm
+  products such as `7 * (1/140)` landed an ulp *below* the tie
+  (`0.049999999999999996`; the issue's report that they land above does not
+  reproduce, and no Bonferroni/Holm case lands above at those alphas), which
+  is harmless for `<= alpha` but not exact. The adjustment now reads each
+  input as the smallest-denominator rational (denominator up to `10**6`)
+  that rounds back to it, computes in exact `fractions.Fraction`
+  arithmetic, and rounds once, so a tied adjusted value is `== alpha`.
+  Inputs with no small-denominator rational behind them are used at their
+  exact binary value. No API change; results differ from R's `p.adjust`
+  (plain floating point, and it shows the same BH artefact) by at most a few
+  ulps. New R parity test `tests/validation_against_r/test_adjust_pvalues.py`
+  — `adjust_pvalues` had none — asserts agreement to `rtol=1e-14`.
+
 ## [0.5.0] - 2026-08-30
 
 The accepted bundle of `docs/power-api-contract-review.md`, freezing the
