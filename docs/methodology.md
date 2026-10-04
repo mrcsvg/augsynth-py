@@ -438,7 +438,7 @@ p-value:
 the acceptance region
 
 $$
-\mathrm{CI}_{1-\alpha} \;=\; \{\, h_0 : \texttt{conformal\_pvalue}(fit, h_0) \ge \alpha \,\},
+\mathrm{CI}_{1-\alpha} \;=\; \{\, h_0 : \texttt{conformal\_pvalue}(fit, h_0) > \alpha \,\},
 $$
 
 approximated on a finite grid centred at `att_` and spanning
@@ -458,16 +458,43 @@ If truncation persists at the cap a `UserWarning` is emitted and the widest
 computed bounds are returned as a lower bound on the true interval. Under `block`
 the $p(h_0)$ curve peaks near a well-specified $h_0$ and decays to a **floor of
 $1/T$** (the $j=0$ identity shift always ties itself) at extreme $h_0$; when
-$T \le 1/\alpha$ that floor keeps $p(h_0) \ge 1/T \ge \alpha$ at *every* $h_0$,
+$T < 1/\alpha$ that floor keeps $p(h_0) \ge 1/T > \alpha$ at *every* $h_0$,
 so the acceptance region is **unbounded** and lands in exactly this
-truncation/`UserWarning` branch.
+truncation/`UserWarning` branch. At $T = 1/\alpha$ exactly the floor equals
+$\alpha$, is rejected, and the region can be bounded — the degeneracy comes
+from the floor only strictly below $1/\alpha$.
 
 This is distinct from an **empty** acceptance region, which returns `(nan, nan)`
 and which widening cannot fix. Empty requires the *peak* of $p(h_0)$ to fall
-below $\alpha$ — driven by residual **non-exchangeability** (a poor / trending
-fit), and only *possible* when $1/T < \alpha$ (i.e. $T > 1/\alpha$); it is **not**
-caused by, and does not occur under, the small-$T$ ($T \le 1/\alpha$) floor
-regime above.
+to $\alpha$ or below — driven by residual **non-exchangeability** (a poor /
+trending fit), and only *possible* when $1/T \le \alpha$ (i.e. $T \ge 1/\alpha$);
+it is **not** caused by, and does not occur under, the small-$T$
+($T < 1/\alpha$) floor regime above.
+
+**Boundary convention: strict $p > \alpha$ (issue #29).** The strict inequality
+is CWZ 2021's: Algorithm 1 defines $C_{1-\alpha} = \{\theta : \hat p(\theta) >
+\alpha\}$, Theorems 1 and D.1 are stated for $P(\hat p \le \alpha)$, and the
+proof of Theorem 1 (App. H.3) identifies coverage with the event
+$\hat p > \alpha$. It also makes the interval the exact acceptance region of
+the $p \le \alpha$ test that power analysis counts as a detection (§6), so the
+two entry points cannot give opposite answers on the same fit. The convention
+is observable only when $p = \alpha$ is attainable — under `block`, when
+$\alpha T$ is an integer ($T \in \{20, 40, 60, \dots\}$ at $\alpha = 0.05$;
+$T = 90$ at $\alpha = 0.10$). There, under exchangeability, the size of the
+test is $\lfloor \alpha T \rfloor / T = \alpha$ exactly (Theorem D.1); the
+non-strict $p \ge \alpha$ would over-cover by $1/T$ (97.5% for a requested
+95% at $T = 40$) and leave the region unbounded for every dataset at
+$T = 1/\alpha$.
+
+**Deliberate divergence from R.** BFR 2021 (Appendix A, after eq. A.1) write
+the set as $\{\tau_0 : \hat p_{\tau_0} \ge \alpha\}$, and R `augsynth` follows
+that: called as a black box on the aggregate reshape of `GeoLift_PreTest`,
+its internal `compute_permute_ci` returns the $p \ge \alpha$ envelope at all
+8 attainable $\alpha = k/T$ where the two rules differ, never the $p > \alpha$
+one. At such $\alpha$ this package's interval is therefore one grid step
+narrower than R's, by design; elsewhere the two coincide. The divergence is
+pinned by `test_r_interval_inversion_uses_non_strict_boundary` in
+[`tests/validation_against_r/test_conformal.py`](../tests/validation_against_r/test_conformal.py).
 
 ### 5.4 Validation
 
@@ -482,11 +509,16 @@ Parity is pinned in
   p-value within a documented Monte-Carlo tolerance (`0.03`) for a fixed `rng`
   and large `ns`; seeds do not transfer between R and Python, so exact parity is
   not expected on this path.
-- **Confidence interval — transitive.** R `augsynth` exposes no *aggregate*
-  conformal CI (only per-period intervals), so there is no direct oracle for
-  `conformal_interval`. It is validated transitively: the interval is pure test
-  inversion over `conformal_pvalue`, and $p(h_0)$ matches R exactly at every
-  tested $h_0$, so the inverted region is correct by construction.
+- **Confidence interval — transitive, plus a pinned boundary divergence.**
+  R `augsynth`'s public output exposes no *aggregate* conformal CI (only
+  per-period intervals), and our grid construction differs from R's, so the
+  reported bounds are not compared directly. The interval is validated
+  transitively: it is pure test inversion over `conformal_pvalue`, and
+  $p(h_0)$ matches R exactly at every tested $h_0$. The inversion *rule* is
+  checked against R's internal `compute_permute_ci` on a shared grid: R
+  accepts $p \ge \alpha$, we accept $p > \alpha$ (§5.3), and the test asserts
+  both that R's bounds are the non-strict envelope and that the two rules
+  differ only at attainable $\alpha = k/T$.
 - **Second fixture — the $p(h_0)$ curve on the Basque panel.** The block
   p-value also matches R exactly on the Abadie & Gardeazabal (2003) Basque
   panel (`Synth(fixedeff=False)`), at probes spanning the full structure of
@@ -750,9 +782,12 @@ p-values (superuniform, $P(p \le \alpha) \le \alpha$) the non-strict form
 attains the nominal size when $\alpha$ is attainable. This is observable:
 block-scheme p-values are multiples of $1/T$, so an $\alpha$ sitting exactly
 on that grid (e.g. $\alpha = 0.1$ with $T = 90$) differs between the $\le$
-and $<$ conventions. The parity test pins the harness at a tie-free
-$\alpha$ so it holds under either convention; if the R oracle is ever shown
-to use strict $<$ at a tie, revisit `PowerResults.power_curve`.
+and $<$ conventions. `conformal_interval` accepts exactly the complement,
+$p > \alpha$ (§5.3), so a simulated detection and the interval excluding
+$h_0 = 0$ are the same event. R `augsynth`'s interval inversion implies the
+strict $p < \alpha$ rejection instead (§5.3, deliberate divergence, issue
+#29); `GeoLiftPower`'s own rule at a tie is still untested — the parity test
+pins the harness at a tie-free $\alpha$ so it holds under either convention.
 
 ### 6.3 GeoLiftPower correspondence
 

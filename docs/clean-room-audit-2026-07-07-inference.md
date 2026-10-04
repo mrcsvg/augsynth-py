@@ -189,6 +189,15 @@ $\{h_0 : p(h_0) \ge \alpha\}$.
 `min`/`max` recovery are engineering decisions the paper does not specify — see
 D-4, D-5, D-6.
 
+> **Update (2026-10-04) — the "Paper" line above misquoted CWZ.** CWZ 2021
+> Algorithm 1 defines the set with a *strict* inequality,
+> $\{\theta : \hat p(\theta) > \alpha\}$, and the proof of Theorem 1
+> (App. H.3) identifies coverage with the event $\hat p > \alpha$. The
+> non-strict form audited here as faithful is BFR 2021's (Appendix A) and
+> R `augsynth`'s. The difference is observable only when $\alpha T$ is an
+> integer under the block scheme, which is why this audit did not catch it.
+> The code now uses the strict form (issue #29); see `methodology.md` §5.3.
+
 ### 3.5 What we do *not* implement
 
 - **Non-constant effect paths.** Only the constant-effect null is testable;
