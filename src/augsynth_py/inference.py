@@ -609,10 +609,17 @@ def conformal_interval(
 
     .. math::
 
-        \mathrm{CI}_{1-\alpha} = \{h_0 : p(h_0) \ge \alpha\},
+        \mathrm{CI}_{1-\alpha} = \{h_0 : p(h_0) > \alpha\},
 
     where :math:`p(h_0)` is :func:`conformal_pvalue` evaluated at the null
-    constant effect :math:`h_0`. Because the p-value is only available
+    constant effect :math:`h_0`. The strict inequality is CWZ 2021's
+    (Algorithm 1; coverage is proved for the event :math:`p > \alpha`, proof
+    of Theorem 1) and makes the interval the exact acceptance region of the
+    test that rejects at :math:`p \le \alpha` — the rule
+    :func:`~augsynth_py.power.simulate_power` counts as a detection. R
+    ``augsynth`` (and BFR 2021, Appendix A) accept :math:`p \ge \alpha`
+    instead; the two differ only when :math:`p = \alpha` is attainable (see
+    *Notes*). Because the p-value is only available
     pointwise, the acceptance region is approximated on a finite grid and the
     interval is reported as ``(min, max)`` of the accepted grid points.
 
@@ -676,21 +683,23 @@ def conformal_interval(
         interval in that case.
 
         Empty ``(nan, nan)`` requires the *peak* of the ``p(h0)`` curve to fall
-        below ``alpha``. Under the block scheme ``p(h0)`` peaks near a
+        to or below ``alpha``. Under the block scheme ``p(h0)`` peaks near a
         well-specified ``h0`` (large — the ``j = 0`` identity shift makes the
         residuals nearly tie, so ``p`` approaches 1) and decays to a **floor of
         ``1/T``** (``T`` = total periods; the identity shift always ties itself,
         so the count is at least 1) at extreme ``h0``. An empty region therefore
         arises only from **residual non-exchangeability** — a poor / trending /
-        heteroskedastic fit that depresses even the peak below ``alpha``. It is
-        *only possible when* ``1/T < alpha`` (i.e. ``T > 1/alpha``, e.g.
-        ``T > 20`` for a 95% CI); otherwise the ``1/T`` floor keeps every ``h0``
-        accepted.
+        heteroskedastic fit that depresses even the peak to ``alpha`` or below.
+        It is *only possible when* ``1/T <= alpha`` (i.e. ``T >= 1/alpha``, e.g.
+        ``T >= 20`` for a 95% CI); otherwise the ``1/T`` floor keeps every
+        ``h0`` accepted.
 
-        The complementary regime, ``T <= 1/alpha`` (e.g. ``T = 14`` at
-        ``alpha = 0.05``, floor ``1/14 ~ 0.071 >= 0.05``), is *not* empty: the
-        floor holds ``p(h0) >= 1/T >= alpha`` at **every** ``h0``, so the
-        acceptance region is **unbounded**. That hits the truncation guard
+        The complementary regime, ``T < 1/alpha`` (e.g. ``T = 14`` at
+        ``alpha = 0.05``, floor ``1/14 ~ 0.071 > 0.05``), is *not* empty: the
+        floor holds ``p(h0) >= 1/T > alpha`` at **every** ``h0``, so the
+        acceptance region is **unbounded**. At ``T == 1/alpha`` exactly the
+        floor equals ``alpha`` and is rejected, so the region can be bounded.
+        The unbounded case hits the truncation guard
         (widening + ``UserWarning`` + finite truncated bounds; see *Notes*),
         never ``(nan, nan)``.
 
@@ -699,6 +708,19 @@ def conformal_interval(
     The reported bounds are the innermost accepted grid points, so each bound is
     accurate only to about one grid spacing, ``2 * spread / (grid_size - 1)``;
     increasing ``grid_size`` tightens this resolution.
+
+    **Boundary convention.** A grid point is accepted iff ``p(h0) > alpha``.
+    Under the deterministic block scheme ``p`` is a multiple of ``1/T``, so
+    ``p == alpha`` is attainable only when ``alpha * T`` is an integer (e.g.
+    ``T`` in {20, 40, 60, ...} at ``alpha = 0.05``); elsewhere ``>`` and
+    ``>=`` select the same points. Where they differ, ``>`` attains the
+    nominal coverage ``1 - alpha`` under exchangeability (CWZ 2021, Theorem
+    D.1: ``P(p <= alpha) = floor(alpha * T) / T``), while ``>=`` silently
+    over-covers by ``1/T`` — 97.5% for a requested 95% at ``T = 40``, and an
+    always-unbounded region at ``T = 20``. R ``augsynth`` uses ``>=``
+    (verified as a black box on its ``compute_permute_ci``), so at those ``T``
+    this interval is deliberately one grid step narrower than R's; see
+    ``docs/methodology.md`` §5.3 and issue #29.
 
     **Truncation guard.** The grid span starts at ``6 * sd(post gap)``, derived
     from the *point-estimate* ``gap_`` dispersion, but each grid point is scored
@@ -713,13 +735,13 @@ def conformal_interval(
     interior. If truncation persists at the cap, a :class:`UserWarning` is
     emitted and the widest computed bounds are returned as a lower bound on the
     true interval. This is distinct from the empty-region ``(nan, nan)`` case in
-    *Returns*: there *no* ``h0`` is accepted (peak p-value below ``alpha``),
+    *Returns*: there *no* ``h0`` is accepted (peak p-value at or below ``alpha``),
     which widening cannot fix; here a boundary-reaching region is accepted and
     widening extends it.
 
     **Non-contiguity warning.** The acceptance region of the refit-under-null
     test is not guaranteed to be an interval: because the residuals depend on
-    ``h0`` through the refit, ``p(h0)`` can dip below ``alpha`` on a stretch
+    ``h0`` through the refit, ``p(h0)`` can dip to or below ``alpha`` on a stretch
     strictly inside the accepted envelope (demonstrated on the Basque panel,
     where the rejected gap contains ``att_`` itself — identically in R; see
     ``docs/methodology.md`` §5.5). When the accepted grid points are not
@@ -786,7 +808,7 @@ def conformal_interval(
                     ns=ns,
                     rng=rng,
                 )
-                >= alpha
+                > alpha
                 for h0 in candidates
             ),
             dtype=bool,
@@ -811,7 +833,7 @@ def conformal_interval(
         candidates, accept_mask = _accepted(lin)
         if not accept_mask.any():
             # Empty acceptance region: widening cannot recover it (the peak
-            # p-value over h0 is below alpha — structural, see Returns).
+            # p-value over h0 is at or below alpha — structural, see Returns).
             return (float("nan"), float("nan"))
         accepted_idx = np.flatnonzero(accept_mask)
         lower = float(candidates[accepted_idx[0]])

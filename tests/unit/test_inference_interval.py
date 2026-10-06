@@ -2,7 +2,7 @@
 
 These exercise the CWZ 2021 test-inversion confidence interval: the CI is the
 set of null effects ``h0`` that the conformal test fails to reject at level
-``alpha`` (i.e. ``conformal_pvalue(fit, h0) >= alpha``).
+``alpha`` (i.e. ``conformal_pvalue(fit, h0) > alpha``, CWZ 2021 Algorithm 1).
 """
 
 import numpy as np
@@ -300,3 +300,50 @@ def test_contiguous_acceptance_region_does_not_warn(monkeypatch):
     lo, hi = inference.conformal_interval(_StubFit(), alpha=0.05, grid_size=41)
     assert lo == pytest.approx(-2.0, abs=0.2)
     assert hi == pytest.approx(2.0, abs=0.2)
+
+
+# ---------------------------------------------------------------------------
+# Boundary convention (issue #29): accept h0 iff p(h0) > alpha.
+#
+# CWZ 2021 define the (1 - alpha) set as {h0 : p(h0) > alpha} (Algorithm 1)
+# and prove coverage for exactly that event (proof of Theorem 1, App. H.3);
+# it is also the acceptance region of the p <= alpha test that power.py
+# counts as a detection. The two rules differ only at p == alpha, reachable
+# under the deterministic block scheme when alpha * T is an integer.
+# ---------------------------------------------------------------------------
+
+
+def test_pvalue_equal_to_alpha_is_rejected(monkeypatch):
+    # A p(h0) curve whose floor sits exactly at alpha: accepted on |h0| <= 1,
+    # p == alpha everywhere else. Under the old p >= alpha rule the whole grid
+    # was accepted (unbounded region, truncation warning); under p > alpha the
+    # floor is rejected and the interval is the inner plateau. pytest.ini's
+    # filterwarnings=error makes a stray truncation warning fail this test.
+    import augsynth_py.inference as inference
+
+    alpha = 0.05
+
+    def fake_pvalue(fit, h0=0.0, **kwargs):
+        return 1.0 if abs(h0) <= 1.0 else alpha
+
+    monkeypatch.setattr(inference, "conformal_pvalue", fake_pvalue)
+    lo, hi = inference.conformal_interval(_StubFit(), alpha=alpha, grid_size=41)
+    assert lo == pytest.approx(-1.0, abs=0.2)
+    assert hi == pytest.approx(1.0, abs=0.2)
+
+
+@pytest.mark.parametrize(("T", "t0", "alpha"), [(20, 17, 0.05), (40, 35, 0.025)])
+def test_interval_agrees_with_test_at_alpha_times_t_integer(T, t0, alpha):  # noqa: N803
+    # Real fits where the block p-value at the sharp null lands exactly on
+    # alpha (alpha * T == 1, so the 1/T floor IS alpha). The interval must
+    # agree with the p <= alpha test that power.py uses: p(0) == alpha means
+    # 0 is rejected, so the interval excludes 0 -- and it is bounded, since
+    # at alpha * T == 1 an exact test has nominal size, not size zero.
+    from augsynth_py.inference import conformal_pvalue
+
+    fit = _fit_with_effect(1.0, T=T, t0=t0)
+    assert conformal_pvalue(fit, 0.0) == alpha  # the tie this test is about
+    lo, hi = conformal_interval(fit, alpha=alpha, grid_size=81)
+    assert np.isfinite(lo) and np.isfinite(hi)
+    assert not (lo <= 0.0 <= hi)
+    assert lo <= fit.att_ <= hi

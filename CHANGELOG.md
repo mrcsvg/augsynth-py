@@ -35,6 +35,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Behaviour change** (#29): `conformal_interval` now accepts `h0` iff
+  `p(h0) > alpha`, not `>= alpha`. This is the set CWZ 2021 define
+  (Algorithm 1) and prove coverage for, and it is exactly the acceptance
+  region of the `p <= alpha` test that `simulate_power` counts as a
+  detection. Before this change the two entry points could give opposite
+  answers on the same fit, same data and same `alpha`. Output changes only
+  where `p == alpha` is attainable: under the block scheme, when `alpha * T`
+  is an integer (`T` in {20, 40, 60, ...} at `alpha = 0.05`; the
+  `GeoLift_PreTest` fixture at `alpha = 0.10`). There the interval loses
+  one grid step per side that sat on `p == alpha`, and its coverage moves
+  from an undeclared `1 - alpha + 1/T` to the nominal `1 - alpha` (95%
+  instead of 97.5% at `T = 40`). At `T == 1/alpha` the region is no longer
+  unbounded for every dataset. This **deliberately diverges from R
+  `augsynth`**, whose `compute_permute_ci` accepts `p >= alpha` (BFR 2021,
+  Appendix A); the divergence is pinned by a new parity test. No API change;
+  the power contract is untouched. The docs claim that `T <= 1/alpha` forces
+  an unbounded interval is corrected to `T < 1/alpha` (`inference.py`,
+  `methodology.md` §5.3), and the 2026-07-07 inference audit gets a dated
+  note correcting its quotation of CWZ.
 - `docs/methodology.md` gains §5.6 for the above; the former §5.6 and §5.7
   shift to §5.7 and §5.8.
 - `tests/validation_against_r/test_conformal.py` silences the new warning at
