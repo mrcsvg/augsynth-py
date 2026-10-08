@@ -273,3 +273,99 @@ def test_placebo_needs_two_donors() -> None:
     fit = fit_synth(two)
     with pytest.raises(ValueError, match="at least two donors"):
         placebo_in_space(fit)
+
+
+def _patch_rmspe(monkeypatch: pytest.MonkeyPatch, fit: Synth, overrides: dict[str, str]) -> None:
+    """Make ``_rmspe`` return degenerate values for chosen units.
+
+    ``placebo_in_space`` calls ``_rmspe(actual, synthetic, mask)`` twice per
+    unit (pre mask, then post mask) with ``actual`` being that unit's own
+    outcome series. The series are the columns of ``fit._y_matrix`` and the
+    refit round-trips them exactly, so matching ``actual`` against the column
+    of a unit identifies the unit deterministically. ``mask[0]`` tells pre
+    (True) from post (False) because the first period is pre-treatment.
+    ``overrides`` maps unit -> "nan" (0 pre, 0 post -> 0/0) or "inf" (0 pre,
+    real post -> x/0).
+    """
+    import augsynth_py.robustness as rb
+
+    real = rb._rmspe
+    y = np.asarray(fit._y_matrix)
+    cols = {u: y[:, i] for i, u in enumerate(fit.units_)}
+
+    def fake(actual: Any, synthetic: Any, mask: Any) -> float:
+        for u, mode in overrides.items():
+            if np.allclose(actual, cols[u], atol=1e-12) and (mode == "nan" or bool(mask[0])):
+                return 0.0
+        return float(real(actual, synthetic, mask))
+
+    monkeypatch.setattr(rb, "_rmspe", fake)
+
+
+def test_placebo_nan_and_inf_ratios(panel: pl.DataFrame, monkeypatch: pytest.MonkeyPatch) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = fit_synth(panel)
+    clean = placebo_in_space(fit)
+    _patch_rmspe(monkeypatch, fit, {"u3": "nan", "u5": "nan", "u4": "inf"})
+    res = placebo_in_space(fit)
+
+    by_unit = {r["unit"]: r for r in res.ratios.iter_rows(named=True)}
+    for u in ("u3", "u5"):
+        assert np.isnan(by_unit[u]["ratio"])
+        assert by_unit[u]["rank"] is None
+        assert by_unit[u]["discarded"] is False and by_unit[u]["error"] is None
+    assert by_unit["u4"]["ratio"] == float("inf")
+    assert by_unit["u4"]["rank"] == 1
+    # Treated row and statistic untouched.
+    assert res.statistic == clean.statistic
+    assert by_unit["u0"]["ratio"] == clean.statistic
+    # Undefined ratios leave the denominator; inf stays in it.
+    kept = res.ratios.filter(pl.col("rank").is_not_null())["ratio"].to_numpy()
+    assert len(kept) == 5  # u0, u1, u2, u4(inf), u6
+    assert res.pvalue == np.sum(kept >= res.statistic) / len(kept)
+    assert by_unit["u0"]["rank"] == 1 + int(np.sum(kept > res.statistic))
+
+
+def test_placebo_nan_statistic_warns(panel: pl.DataFrame, monkeypatch: pytest.MonkeyPatch) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = fit_synth(panel)
+    _patch_rmspe(monkeypatch, fit, {"u0": "nan"})
+    with pytest.warns(UserWarning, match="undefined"):
+        res = placebo_in_space(fit)
+
+    assert np.isnan(res.statistic)
+    assert np.isnan(res.pvalue)
+    assert res.ratios["rank"][0] is None
+    assert res.ratios["is_treated"][0] is True
+    # Placebos are still ranked among themselves.
+    assert sorted(res.ratios["rank"].drop_nulls().to_list()) == list(range(1, 7))
+
+
+def test_placebo_all_discarded_warns(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = fit_synth(panel)
+    with pytest.warns(UserWarning, match="no placebo"):
+        res = placebo_in_space(fit, mspe_limit=1e-12)
+
+    assert len(res.discarded) == 6
+    assert res.pvalue == 1.0
+    assert res.ratios["rank"].to_list() == [1] + [None] * 6
+
+
+def test_placebo_rank_ties_share_the_smaller_rank(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    dup = panel.filter(pl.col(UNIT) == "u1").with_columns(pl.lit("u1_dup").alias(UNIT))
+    res = placebo_in_space(fit_synth(pl.concat([panel, dup])))
+
+    by_unit = {r["unit"]: r for r in res.ratios.iter_rows(named=True)}
+    a, b = by_unit["u1"], by_unit["u1_dup"]
+    assert a["ratio"] == b["ratio"]
+    assert a["rank"] == b["rank"]
+    ranks = res.ratios["rank"].to_list()
+    k = a["rank"]
+    # Competition ranking: the tied pair shares k and k + 1 is skipped.
+    assert sorted(ranks) == sorted([r for r in range(1, 9) if r != k + 1] + [k])

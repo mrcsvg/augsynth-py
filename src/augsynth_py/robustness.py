@@ -194,7 +194,9 @@ class PlaceboInSpaceResult:
     pvalue : float
         Share of kept units (placebos plus the treated unit itself) whose
         ratio is at least ``statistic``: ``#{ratio >= statistic} /
-        (J_kept + 1)``. Its floor is ``1 / (J_kept + 1)``.
+        (J_kept + 1)``. Its floor is ``1 / (J_kept + 1)``. Placebos with an
+        undefined ratio (0/0) are excluded from the rank and the p-value;
+        ``nan`` when the treated unit's own ratio is undefined.
     ratios : pl.DataFrame
         One row per unit — the treated unit first, then donors in
         ``fit.units_`` order. Columns:
@@ -205,10 +207,12 @@ class PlaceboInSpaceResult:
         - ``ratio`` (f64): ``rmspe_post / rmspe_pre`` (``inf`` for a perfect
           pre-fit with post error, ``nan`` for 0/0); null on error.
         - ``rank`` (i64): 1 for the largest ratio among kept units, ties share
-          the smaller rank; null for discarded or errored rows.
+          the smaller rank; null for discarded or errored rows and for
+          placebos with an undefined ratio (0/0), which are excluded from the
+          rank and the p-value. An ``inf`` ratio is kept and ranks first.
         - ``discarded`` (bool): dropped by ``mspe_limit``.
-        - ``lambda_`` (f64): ridge penalty the refit used (AugSynth); null
-          otherwise.
+        - ``lambda_`` (f64): ridge penalty the refit used (AugSynth), or the
+          original fit's penalty on the treated row; null otherwise.
         - ``error`` (str): ``"ExcType: message"`` under
           ``on_error="record"``; null otherwise.
     gaps : pl.DataFrame
@@ -702,30 +706,47 @@ def placebo_in_space(
             - np.asarray(fitted.synthetic_, dtype=np.float64)
         )
 
-    # Discard rule (ADH 2010 / SCtools): pre-MSPE at least `mspe_limit` times
-    # the treated unit's. Never applies to the treated row or to errored rows.
-    discarded_flags: list[bool] = []
+    # Discard rule (ADH 2010 / SCtools): (pre_j / pre_treated)^2 >= mspe_limit.
+    # Never applies to the treated row or to errored rows. _ratio's conventions
+    # carry over: a zero treated pre-RMSPE (inf) discards, 0/0 (nan) does not.
     for r in rows:
-        if r["is_treated"] or r["error"] is not None or mspe_limit is None:
-            discarded_flags.append(False)
-        else:
-            discarded_flags.append(bool(float(r["rmspe_pre"]) ** 2 >= mspe_limit * t_pre**2))
+        r["discarded"] = bool(
+            not r["is_treated"]
+            and r["error"] is None
+            and mspe_limit is not None
+            and _ratio(t_pre, float(r["rmspe_pre"])) ** 2 >= mspe_limit
+        )
 
-    kept_ratios = np.array(
-        [
-            float(r["ratio"])
-            for r, disc in zip(rows, discarded_flags, strict=True)
-            if r["error"] is None and not disc
-        ],
-        dtype=np.float64,
-    )
-    pvalue = float(np.sum(kept_ratios >= statistic) / len(kept_ratios))
-    ranks: list[int | None] = [
-        None
-        if (r["error"] is not None or disc)
-        else 1 + int(np.sum(kept_ratios > float(r["ratio"])))
-        for r, disc in zip(rows, discarded_flags, strict=True)
-    ]
+    # The comparison set: successful, kept rows with a defined ratio. A 0/0
+    # ratio (nan) compares False against everything, so it would rank first and
+    # pad the denominator; it is left out instead. inf is the most extreme
+    # ratio and stays in (inf >= inf is True).
+    def _kept(r: dict[str, Any]) -> bool:
+        return bool(r["error"] is None and not r["discarded"] and not np.isnan(r["ratio"]))
+
+    kept_ratios = np.array([float(r["ratio"]) for r in rows if _kept(r)], dtype=np.float64)
+    for r in rows:
+        r["rank"] = 1 + int(np.sum(kept_ratios > float(r["ratio"]))) if _kept(r) else None
+
+    if np.isnan(statistic):
+        pvalue = float("nan")
+        warnings.warn(
+            f"The treated unit {treated_label!r} has zero pre- and post-period RMSPE, so the "
+            "post/pre RMSPE ratio statistic is undefined (0/0); pvalue is nan and the treated "
+            "rank is null.",
+            UserWarning,
+            stacklevel=2,
+        )
+    else:
+        pvalue = float(np.sum(kept_ratios >= statistic) / len(kept_ratios))
+    if not any(_kept(r) for r in rows if not r["is_treated"]):
+        warnings.warn(
+            "placebo_in_space: no placebo survived mspe_limit / refit errors / undefined "
+            "ratios; the p-value is uninformative (the treated unit alone is in the "
+            "comparison set).",
+            UserWarning,
+            stacklevel=2,
+        )
 
     ratios = pl.DataFrame(
         rows,
@@ -735,23 +756,11 @@ def placebo_in_space(
             "rmspe_pre": pl.Float64,
             "rmspe_post": pl.Float64,
             "ratio": pl.Float64,
+            "rank": pl.Int64,
+            "discarded": pl.Boolean,
             "lambda_": pl.Float64,
             "error": pl.String,
         },
-    ).with_columns(
-        pl.Series("rank", ranks, dtype=pl.Int64),
-        pl.Series("discarded", discarded_flags, dtype=pl.Boolean),
-    )
-    ratios = ratios.select(
-        "unit",
-        "is_treated",
-        "rmspe_pre",
-        "rmspe_post",
-        "ratio",
-        "rank",
-        "discarded",
-        "lambda_",
-        "error",
     )
 
     n_periods = len(fit.periods_)
@@ -763,7 +772,7 @@ def placebo_in_space(
         },
         schema_overrides={"unit": pl.String, "gap": pl.Float64},
     )
-    discarded = tuple(str(r["unit"]) for r, disc in zip(rows, discarded_flags, strict=True) if disc)
+    discarded = tuple(str(r["unit"]) for r in rows if r["discarded"])
     at_boundary = _surface_warnings(donors, [m for _f, m, _e in runs])
     return PlaceboInSpaceResult(
         statistic=statistic,
