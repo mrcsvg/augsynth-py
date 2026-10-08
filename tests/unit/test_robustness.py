@@ -110,7 +110,7 @@ def test_loo_names_the_contaminated_donor(shocked_panel: pl.DataFrame) -> None:
     assert set(res.att["dropped_unit"].to_list()) == {"u1", "u2"}
     assert res.most_influential == "u1"
     lo, hi = res.att_range
-    assert lo <= fit.att_ <= hi or lo <= hi  # range is ordered
+    assert lo <= hi  # range is ordered
     assert lo == res.att["att"].min()
     assert hi == res.att["att"].max()
     # Every refit stays negative, as does the full fit: sign is stable even
@@ -126,6 +126,7 @@ def test_loo_donor_selection_modes(panel: pl.DataFrame) -> None:
     assert set(leave_one_out(fit).att["dropped_unit"]) == {"u1", "u2"}
     assert leave_one_out(fit, donors="all").att.height == 6
     assert leave_one_out(fit, donors=["u3", "u5"]).att["dropped_unit"].to_list() == ["u3", "u5"]
+    assert leave_one_out(fit, donors=["u3", "u3"]).att.height == 1
     with pytest.raises(ValueError, match="not donors"):
         leave_one_out(fit, donors=["u3", "nope"])
     with pytest.raises(ValueError, match="donors"):
@@ -134,6 +135,24 @@ def test_loo_donor_selection_modes(panel: pl.DataFrame) -> None:
         leave_one_out(fit, donors=[])
     with pytest.raises(ValueError, match="tol"):
         leave_one_out(fit, tol=-1.0)
+
+
+def test_loo_paths_schema_when_all_refits_fail(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import leave_one_out
+
+    # Two-unit panel: dropping the only donor leaves an empty pool, so the
+    # single refit fails and every success-derived field must degrade cleanly.
+    fit = fit_synth(panel.filter(pl.col(UNIT).is_in(["u0", "u1"])), fixedeff=False)
+    res = leave_one_out(fit, donors="all", on_error="record")
+
+    assert res.att.height == 1
+    assert res.att["error"][0].startswith("EmptyDonorPoolError")
+    assert res.paths.height == 0
+    assert res.paths.schema["dropped_unit"] == pl.String
+    assert res.paths.schema["synthetic"] == pl.Float64
+    assert res.most_influential is None
+    assert res.sign_stable is False
+    assert all(np.isnan(v) for v in res.att_range)
 
 
 def test_loo_requires_a_fitted_estimator() -> None:

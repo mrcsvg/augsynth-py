@@ -85,11 +85,13 @@ class _RefittableSC(Protocol):
     """Fitted estimator exposing enough state to be refit on a modified panel.
 
     Both :class:`~augsynth_py.Synth` and :class:`~augsynth_py.AugSynth`
-    satisfy this after ``.fit(...)``. The three underscore attributes are the
-    scaffolding those classes keep for the CWZ refit-under-null; this module
-    documents them as the refit-diagnostics extension point in the same way
+    satisfy this after ``.fit(...)``. The two underscore attributes
+    (``_y_matrix``, ``_treated_idx``) are the scaffolding those classes keep
+    for the CWZ refit-under-null; this module documents them as the
+    refit-diagnostics extension point in the same way
     ``conformal_null_residuals`` is the conformal one. A third-party estimator
-    that wants these diagnostics stores the same six quantities.
+    that wants these diagnostics exposes the same attributes and ``fit``
+    signature.
     """
 
     units_: list[str]
@@ -154,14 +156,16 @@ class LeaveOneOutResult:
         - ``error`` (str): ``"ExcType: message"`` under
           ``on_error="record"``; null otherwise.
     att_range : tuple[float, float]
-        ``(min, max)`` of ``att`` over successful refits — the leave-one-out
-        envelope of the estimate. ``(nan, nan)`` if every refit failed.
+        ``(min, max)`` of ``att`` over successful refits with a finite ATT —
+        the leave-one-out envelope of the estimate. ``(nan, nan)`` if no
+        refit qualifies.
     most_influential : str or None
-        Dropped donor with the largest ``|delta_att|``; None if every refit
-        failed.
+        Dropped donor with the largest ``|delta_att|`` among successful refits
+        with a finite ATT; ties go to the donor dropped first. None if no
+        refit qualifies.
     sign_stable : bool
         True when ``att_full`` is nonzero and every successful refit's ATT
-        has the same sign.
+        has the same sign; False when no refit succeeded.
     paths : pl.DataFrame
         Long frame ``dropped_unit, period, synthetic`` with the counterfactual
         path of every successful refit, for plotting against ``fit.actual_``.
@@ -387,6 +391,15 @@ def leave_one_out(
     share a trend, several weight vectors fit the pre-period equally well and
     the solver's choice among them is not meaningful; the ATT, which is what
     this diagnostic reads, is unique up to the pre-period fit.
+
+    **Parallelism and warnings.** Refits run in :class:`joblib.Parallel`
+    worker processes, each capturing its own warnings, which this function
+    re-emits once. The capture uses the process-global warnings filter, so
+    ``n_jobs > 1`` under a thread-based joblib backend, or concurrent calls
+    from several threads, can misattribute or drop warnings; attribution is
+    guaranteed only under the default process backend. joblib does not nest
+    workers: a call made from inside a worker runs its refits sequentially,
+    so parallelize at the caller level or here, not both.
     """
     _check_refittable(fit)
     record = _check_on_error(on_error)
@@ -409,7 +422,7 @@ def leave_one_out(
                 f"donors must be 'nonzero', 'all' or a sequence of donor labels; got {donors!r}."
             )
     else:
-        selected = [str(d) for d in donors]
+        selected = list(dict.fromkeys(str(d) for d in donors))  # dedupe, keep order
         if not selected:
             raise ValueError("donors must name at least one donor.")
         unknown = [d for d in selected if d not in all_donors]
@@ -445,6 +458,7 @@ def leave_one_out(
             )
             continue
         att = float(fitted.att_)
+        lam = getattr(fitted, "lambda_", None)
         rows.append(
             {
                 "dropped_unit": d,
@@ -452,7 +466,7 @@ def leave_one_out(
                 "att": att,
                 "delta_att": att - att_full,
                 "rmspe_pre": float(fitted.rmspe_pre_),
-                "lambda_": getattr(fitted, "lambda_", None),
+                "lambda_": None if lam is None else float(lam),
                 "error": None,
             }
         )
@@ -471,11 +485,15 @@ def leave_one_out(
             "error": pl.String,
         },
     )
-    ok = att_frame.filter(pl.col("error").is_null())
+    ok = att_frame.filter(pl.col("error").is_null() & pl.col("att").is_finite())
     if ok.height > 0:
         atts = ok["att"].to_numpy()
         att_range = (float(atts.min()), float(atts.max()))
-        most = str(ok.sort(pl.col("delta_att").abs(), descending=True)["dropped_unit"][0])
+        most = str(
+            ok.sort(pl.col("delta_att").abs(), descending=True, maintain_order=True)[
+                "dropped_unit"
+            ][0]
+        )
         sign_stable = bool(att_full != 0.0 and np.all(np.sign(atts) == np.sign(att_full)))
     else:
         att_range = (float("nan"), float("nan"))
@@ -488,7 +506,8 @@ def leave_one_out(
             "dropped_unit": [d for d in path_units for _ in range(n_periods)],
             "period": _tiled_periods(fit, len(path_units)),
             "synthetic": np.concatenate(path_values) if path_values else np.zeros(0),
-        }
+        },
+        schema_overrides={"dropped_unit": pl.String, "synthetic": pl.Float64},
     )
     at_boundary = _surface_warnings(selected, [m for _f, m, _e in runs])
     return LeaveOneOutResult(
