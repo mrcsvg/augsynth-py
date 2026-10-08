@@ -14,7 +14,9 @@ from typing import Any
 import numpy as np
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
+from augsynth_py.synth.augmented import AugSynth
 from augsynth_py.synth.classical import Synth
 
 N_PERIODS = 24
@@ -369,3 +371,133 @@ def test_placebo_rank_ties_share_the_smaller_rank(panel: pl.DataFrame) -> None:
     k = a["rank"]
     # Competition ranking: the tied pair shares k and k + 1 is skipped.
     assert sorted(ranks) == sorted([r for r in range(1, 9) if r != k + 1] + [k])
+
+
+# ---------------------------------------------------------------------------
+# Shared behaviour: errors, parallelism, treated groups, lambda policy, warnings
+# ---------------------------------------------------------------------------
+
+
+class _Flaky(Synth):
+    """Synth that refuses to fit when the treated unit is ``u2``."""
+
+    def fit(self, panel: pl.DataFrame, **kw: Any) -> Synth:  # type: ignore[override]
+        if kw["treated"] == "u2":
+            raise RuntimeError("boom")
+        return super().fit(panel, **kw)
+
+
+def test_on_error_raise_propagates_and_record_keeps_going(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = _Flaky().fit(panel, unit=UNIT, time=TIME, outcome=OUT, treated="u0", treatment_time=T0)
+    with pytest.raises(RuntimeError, match="boom"):
+        placebo_in_space(fit)
+
+    res = placebo_in_space(fit, on_error="record")
+    bad = res.ratios.filter(pl.col("unit") == "u2").row(0, named=True)
+    assert bad["error"] == "RuntimeError: boom"
+    assert bad["ratio"] is None and bad["rank"] is None and bad["discarded"] is False
+    assert res.ratios.filter(pl.col("error").is_null()).height == 6
+    # Errored placebos leave the denominator.
+    kept = res.ratios.filter(pl.col("error").is_null())["ratio"].to_numpy()
+    assert res.pvalue == np.sum(kept >= res.statistic) / 6
+    assert "u2" not in set(res.gaps["unit"])
+
+    with pytest.raises(ValueError, match="on_error"):
+        placebo_in_space(fit, on_error="ignore")  # type: ignore[arg-type]
+
+
+def test_loo_on_error_record(panel: pl.DataFrame) -> None:
+    from augsynth_py.exceptions import EmptyDonorPoolError
+    from augsynth_py.robustness import leave_one_out
+
+    # LOO always refits the real treated unit, so a refit can only fail on the
+    # pool: with a single donor, dropping it empties the pool. The "record"
+    # side of this case is covered by test_loo_paths_schema_when_all_refits_fail.
+    two = panel.filter(pl.col(UNIT).is_in(["u0", "u1"]))
+    fit = fit_synth(two)
+    with pytest.raises(EmptyDonorPoolError):
+        leave_one_out(fit, donors="all")
+
+
+def test_parallel_matches_sequential(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    fit = fit_synth(panel)
+    seq, par = placebo_in_space(fit), placebo_in_space(fit, n_jobs=2)
+    assert_frame_equal(seq.ratios, par.ratios)
+    assert_frame_equal(seq.gaps, par.gaps)
+    assert seq.pvalue == par.pvalue
+    lseq, lpar = leave_one_out(fit, donors="all"), leave_one_out(fit, donors="all", n_jobs=2)
+    assert_frame_equal(lseq.att, lpar.att)
+    assert_frame_equal(lseq.paths, lpar.paths)
+
+
+def test_prototype_is_never_refit_in_place(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    fit = fit_synth(panel)
+    before = (fit.att_, dict(fit.weights_), fit.synthetic_.copy())
+    placebo_in_space(fit)
+    leave_one_out(fit, donors="all")
+    assert fit.att_ == before[0]
+    assert fit.weights_ == before[1]
+    np.testing.assert_array_equal(fit.synthetic_, before[2])
+
+
+def test_treated_group_is_collapsed_and_excluded(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    fit = fit_synth(panel, treated=["u0", "u1"])
+    ps = placebo_in_space(fit)
+    assert ps.ratios["unit"].to_list() == ["u0,u1", "u2", "u3", "u4", "u5", "u6"]
+    assert ps.ratios.height == 6
+    loo = leave_one_out(fit, donors="all")
+    assert loo.att["dropped_unit"].to_list() == ["u2", "u3", "u4", "u5", "u6"]
+    # Each LOO refit is the group fit on the panel without that donor.
+    manual = fit_synth(panel.filter(pl.col(UNIT) != "u3"), treated=["u0", "u1"])
+    assert loo.att.filter(pl.col("dropped_unit") == "u3")["att"][0] == pytest.approx(
+        manual.att_, abs=1e-9
+    )
+
+
+def test_augsynth_lambda_policy_follows_the_prototype(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    frozen = AugSynth(lambda_=0.5).fit(
+        panel, unit=UNIT, time=TIME, outcome=OUT, treated="u0", treatment_time=T0
+    )
+    loo = leave_one_out(frozen, donors="all")
+    assert loo.att["lambda_"].to_list() == [0.5] * 6
+    ps = placebo_in_space(frozen)
+    assert ps.ratios["lambda_"].to_list() == [0.5] * 7
+    assert loo.lambda_at_boundary == () and ps.lambda_at_boundary == ()
+
+    grid = np.array([1e-3, 1e3])
+    with pytest.warns(UserWarning):
+        cv = AugSynth(lambda_grid=grid).fit(
+            panel, unit=UNIT, time=TIME, outcome=OUT, treated="u0", treatment_time=T0
+        )
+    # A two-point grid makes every CV choice a boundary choice.
+    with pytest.warns(UserWarning) as rec:
+        loo_cv = leave_one_out(cv, donors="all")
+    summary = [w for w in rec if "refits selected a lambda at the boundary" in str(w.message)]
+    assert len(summary) == 1
+    assert not any(str(w.message).startswith("CV-selected lambda") for w in rec)
+    assert set(loo_cv.lambda_at_boundary) == {f"u{i}" for i in range(1, 7)}
+    assert set(loo_cv.att["lambda_"].to_list()) <= set(grid.tolist())
+
+
+def test_result_types_are_frozen(panel: pl.DataFrame) -> None:
+    from dataclasses import FrozenInstanceError
+
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    fit = fit_synth(panel)
+    ps = placebo_in_space(fit)
+    loo = leave_one_out(fit)
+    with pytest.raises(FrozenInstanceError):
+        ps.pvalue = 0.0  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        loo.att_full = 0.0  # type: ignore[misc]
