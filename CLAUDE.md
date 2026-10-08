@@ -86,11 +86,19 @@ Every public estimator must have at least one test in
 
 PRs that add a new estimator without a parity test should be rejected.
 
+Refit-based *diagnostics* over an already-validated estimator (the
+`robustness` module) satisfy the rule by composition — each refit is
+parity-tested against R `augsynth` on the same modified panel — plus an exact
+oracle for the aggregation where one exists (`SCtools::mspe.test` for the
+placebo test). A diagnostic with neither is not acceptable. See
+`docs/methodology.md` §7.4.
+
 ## Roadmap and scope
 
 Shipped so far: classical `Synth` (v0.1), ridge-augmented `AugSynth` with
-LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3) — each with unit +
-R-parity tests and a clean-room audit in `docs/`.
+LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3), robustness checks —
+in-space placebo and donor leave-one-out (v0.6) — each with unit + R-parity
+tests and a clean-room audit in `docs/`.
 
 Critical path toward end-to-end geo-experiments (the project's reason to
 exist), in order:

@@ -164,6 +164,25 @@ What's available today:
   distribution instead of reduced to a single p-value.
 - `adjust_pvalues` — Holm / Bonferroni / Benjamini-Hochberg adjustment when
   several conformal p-values are reported together (matches R's `p.adjust`).
+- `placebo_in_space` / `leave_one_out` — robustness checks on a fitted
+  estimator: the in-space placebo test and donor leave-one-out, validated
+  against R (`augsynth` for the refits, `SCtools` for the aggregation):
+
+  ```python
+  from augsynth_py import leave_one_out, placebo_in_space
+
+  # Same `fit` as the quickstart above.
+  # Is the gap unusual among donors? (ADH 2010 in-space placebo)
+  ps = placebo_in_space(fit)
+  ps.statistic, ps.pvalue  # post/pre RMSPE ratio and its rank p-value
+  ps.ratios  # per-unit ratios, ranks, discard flags
+  ps.gaps  # long frame for the spaghetti plot
+
+  # Does the estimate hinge on one donor? (ADH 2015 / Abadie 2021 leave-one-out)
+  loo = leave_one_out(fit)
+  loo.att_range, loo.most_influential, loo.sign_stable
+  ```
+
 - Multi-treated fits: pass an iterable of units as `treated` to estimate the
   effect on the treated-group mean (see
   [Treating more than one market](#treating-more-than-one-market)).
