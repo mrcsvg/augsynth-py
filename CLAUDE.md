@@ -100,7 +100,8 @@ placebo test). A diagnostic with neither is not acceptable. See
 Shipped so far: classical `Synth` (v0.1), ridge-augmented `AugSynth` with
 LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3), power analysis / MDE
 (v0.4), and robustness checks — in-space placebo and donor leave-one-out —
-(v0.6), each with unit + R-parity tests and a clean-room audit in `docs/`.
+(v0.6), each with unit + R-parity tests; the estimators, conformal inference
+and the robustness module each have a clean-room audit in `docs/`.
 
 Critical path toward end-to-end geo-experiments (the project's reason to
 exist), in order:

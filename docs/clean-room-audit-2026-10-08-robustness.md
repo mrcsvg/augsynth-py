@@ -288,7 +288,7 @@ public API rather than silently defaulted.
 Condensed from "Decisions made while planning" in
 [`docs/plans/2026-10-06-robustness-v0.6.md`](plans/2026-10-06-robustness-v0.6.md),
 numbering preserved; item 17 was added at the final pre-tag review and is
-recorded here only. "Design" is `2026-10-06-robustness-design.md`.
+recorded here and in the (gitignored) plan. "Design" is `2026-10-06-robustness-design.md`.
 
 | # | Decision | Reason |
 |---|----------|--------|
@@ -359,18 +359,18 @@ R validation job (`.github/workflows/validation.yml`) for layers 2 and 3.
 - **What the layers do not cover.** `leave_one_out` has **no oracle beyond
   composition**: R `augsynth` has no leave-one-out routine and `SCtools`
   does not implement ADH 2015 §4.4, so `att_range`, `sign_stable` and
-  `most_influential` are checked only by the unit suite (23 tests in
+  `most_influential` are checked only by the unit suite (24 tests in
   `tests/unit/test_robustness.py` at the time of the audit) and by the
   composition argument that
   each refit ATT is right. The all-discarded / all-errored placebo case has
   no `SCtools` counterpart (decision 16). Neither gap is closable with the
   oracles available; both are stated.
 
-Unit coverage: 23 tests in `test_robustness.py` (selection modes, `tol`,
+Unit coverage: 24 tests in `test_robustness.py` (selection modes, `tol`,
 `on_error="record"`, NaN / inf ratios, discard boundary, treated groups,
 warning aggregation, dtype preservation, `AugSynth` penalty carry-over),
 plus the `wide_to_long` / `periods_to_series` round trips in `test_panel.py`,
-within the 203-test unit suite.
+within the 204-test unit suite.
 
 ---
 
