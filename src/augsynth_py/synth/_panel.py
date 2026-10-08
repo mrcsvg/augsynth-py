@@ -167,9 +167,12 @@ def wide_to_long(
         Length-``N`` unit labels in column order. A collapsed treated-group
         label (``"a,b"``) is an ordinary unit here.
     periods
-        Length-``T`` array of period values in row order; its element type
-        (int, ``datetime64[D]``, str, ...) is preserved through
-        ``.tolist()`` so polars infers the same dtype ``long_to_wide`` saw.
+        Length-``T`` array of period values in row order. Its dtype is
+        preserved via :func:`periods_to_series` — ``Date``, ``Datetime`` at
+        any resolution, int and str all come back as the dtype
+        ``long_to_wide`` saw. Time-zone information is not recoverable from
+        ``periods`` (``long_to_wide``'s ``to_numpy()`` already drops it), so a
+        tz-aware ``Datetime`` comes back naive.
     unit, time, outcome
         Column names of the returned frame.
 
@@ -193,14 +196,29 @@ def wide_to_long(
     if len(periods) != n_periods:
         raise ValueError(f"Got {len(periods)} periods for a matrix with {n_periods} rows.")
 
-    period_values = np.asarray(periods).tolist()
+    period_series = periods_to_series(periods, time).gather(np.tile(np.arange(n_periods), n_units))
     return pl.DataFrame(
         {
             unit: [str(u) for u in units for _ in range(n_periods)],
-            time: period_values * n_units,
+            time: period_series,
             outcome: y.T.reshape(-1),
         }
     )
+
+
+def periods_to_series(periods: NDArray[Any], name: str) -> pl.Series:
+    """Turn a ``periods`` array from :func:`long_to_wide` back into a polars Series.
+
+    Polars infers the dtype from the numpy dtype directly (``datetime64[ns]``
+    stays ``Datetime("ns")``, ``datetime64[D]`` becomes ``Date``, ints stay
+    ints). Only object arrays — strings, Python ``date`` objects — go through
+    ``.tolist()`` so polars infers from the Python values instead of producing
+    an ``Object`` column. ``np.asarray(periods).tolist()`` alone is wrong:
+    numpy turns ``datetime64[ns]`` into epoch integers because
+    ``datetime.datetime`` has no nanoseconds.
+    """
+    p = np.asarray(periods)
+    return pl.Series(name, p.tolist() if p.dtype == object else p)
 
 
 def imbalance(
