@@ -32,6 +32,7 @@ pip install -e ".[validation,dev]"
 # Install R dependencies (one-time)
 Rscript -e 'install.packages(c("remotes", "Synth", "SCtools"))'
 Rscript -e 'remotes::install_github("ebenmichael/augsynth")'
+Rscript -e 'remotes::install_github("facebookincubator/GeoLift")'
 
 # Run only the parity suite
 pytest tests/validation_against_r/ -v

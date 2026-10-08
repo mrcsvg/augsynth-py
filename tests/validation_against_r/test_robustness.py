@@ -107,21 +107,22 @@ def test_loo_refits_match_r_augsynth_by_composition(
         assert row["att"] == pytest.approx(r_att, abs=1e-4, rel=1e-4)
 
 
-def _build_tdf_in_r(r_session: Any, fit: Any, ps: Any) -> None:
+def _build_tdf_in_r(r_session: Any, fit: Any, ps: Any) -> list[str]:
     """Assemble an SCtools ``tdf`` object in R from our fitted series.
 
     Period index 0..T-1 plays the role of ``year``; ``t1`` is the first post
     index. ``mspe.placs`` and ``loss.v`` are our own pre-period MSPEs, so the
     only thing SCtools computes is the post/pre ratio and the rank p-value.
     ``SCtools:::is_tdf`` is ``inherits(x, "tdf")`` (0.3.3.1), so a classed
-    list with the fields ``mspe.test`` reads is enough.
+    list with the fields ``mspe.test`` reads is enough. Returns the placebo
+    units in ``tdf`` column order.
     """
     import rpy2.robjects as ro
     from rpy2.robjects import FloatVector, StrVector
 
     panel_actual = {u: fit._y_matrix[:, i] for i, u in enumerate(fit.units_)}
     successful = ps.ratios.filter(~pl.col("is_treated") & pl.col("error").is_null())
-    placebos = successful["unit"].to_list()
+    placebos: list[str] = [str(u) for u in successful["unit"].to_list()]
     n = len(placebos)
     pre_mask = np.asarray(fit.pre_mask_, dtype=bool)
     n_pre = int(pre_mask.sum())
@@ -158,9 +159,19 @@ def _build_tdf_in_r(r_session: Any, fit: Any, ps: Any) -> None:
           n = {n}, treated.name = '{TREATED}', loss.v = tdf_loss_v
         )
         class(tdf) <- 'tdf'
+        # R recomputes the pre-MSPE denominators from the series: if our
+        # pre-window definition drifted, supplying them ourselves would move
+        # both sides of the comparison together and hide it.
+        pre <- subset(tdf$df, year < tdf$t1 & year >= tdf$t0)
+        stopifnot(isTRUE(all.equal(
+          sapply(seq_len(tdf$n), function(i) cvTools::mspe(pre[, i], pre[, i + tdf$n])),
+          tdf$mspe.placs$mspe, tolerance = 1e-12)))
+        stopifnot(isTRUE(all.equal(cvTools::mspe(pre$Y1, pre$synthetic.Y1), tdf$loss.v,
+                                   tolerance = 1e-12)))
         """
     )
     assert [str(c) for c in r_session("names(tdf$df)")] == list(cols)
+    return placebos
 
 
 @pytest.mark.requires_r_pkg("SCtools", "GeoLift")
@@ -173,7 +184,7 @@ def test_placebo_aggregation_matches_sctools_mspe_test_exactly(
     ps = placebo_in_space(ny_fit, mspe_limit=mspe_limit)
     # The builder keeps every successful placebo regardless of `discarded`, so
     # the tdf always holds all of them; SCtools applies the discard rule itself.
-    _build_tdf_in_r(r_session, ny_fit, ps)
+    placebos = _build_tdf_in_r(r_session, ny_fit, ps)
     if mspe_limit is None:
         r_session("res <- mspe.test(tdf)")
     else:
@@ -195,8 +206,8 @@ def test_placebo_aggregation_matches_sctools_mspe_test_exactly(
     ours = {
         row["unit"]: row["ratio"] ** 2 for row in kept.iter_rows(named=True)
     }  # RMSPE² = MSPE ratio
-    assert r_units == [u for u in r_units if u in ours]  # same kept set, treated last in R
-    assert set(r_units) == set(ours)
+    assert r_units[-1] == TREATED  # SCtools appends the treated row last
+    assert set(r_units) == set(ours)  # same kept set
     np.testing.assert_allclose([ours[u] for u in r_units], r_ratios, rtol=1e-12, atol=0)
     assert ps.pvalue == r_p
-    assert set(ps.discarded) == set(ps.ratios["unit"]) - set(ours) - {TREATED}
+    assert set(ps.discarded) == set(placebos) - set(r_units)
