@@ -578,3 +578,11 @@ def test_treated_group_gaps_use_the_collapsed_series(panel: pl.DataFrame) -> Non
         manual = fit_synth(pool, treated=d)
         gap = res.gaps.filter(pl.col("unit") == d).sort("period")["gap"].to_numpy()
         np.testing.assert_allclose(gap, manual.actual_ - manual.synthetic_, atol=1e-9)
+
+
+def test_robustness_names_are_package_exports() -> None:
+    import augsynth_py
+
+    for name in ("placebo_in_space", "leave_one_out", "PlaceboInSpaceResult", "LeaveOneOutResult"):
+        assert name in augsynth_py.__all__
+        assert hasattr(augsynth_py, name)

@@ -16,6 +16,12 @@ from augsynth_py.power import (
     PowerResults,
     simulate_power,
 )
+from augsynth_py.robustness import (
+    LeaveOneOutResult,
+    PlaceboInSpaceResult,
+    leave_one_out,
+    placebo_in_space,
+)
 from augsynth_py.synth import AugSynth, Synth
 
 __all__ = [
@@ -23,6 +29,8 @@ __all__ = [
     "AugSynth",
     "ConformalTestResult",
     "EffectType",
+    "LeaveOneOutResult",
+    "PlaceboInSpaceResult",
     "PowerEstimator",
     "PowerParams",
     "PowerResults",
@@ -32,5 +40,7 @@ __all__ = [
     "conformal_interval",
     "conformal_pvalue",
     "conformal_test",
+    "leave_one_out",
+    "placebo_in_space",
     "simulate_power",
 ]
