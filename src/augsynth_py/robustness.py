@@ -164,8 +164,8 @@ class LeaveOneOutResult:
         with a finite ATT; ties go to the donor dropped first. None if no
         refit qualifies.
     sign_stable : bool
-        True when ``att_full`` is nonzero and every successful refit's ATT
-        has the same sign; False when no refit succeeded.
+        True when ``att_full`` is nonzero and every successful refit with a
+        finite ATT has the same sign; False when no refit succeeded.
     paths : pl.DataFrame
         Long frame ``dropped_unit, period, synthetic`` with the counterfactual
         path of every successful refit, for plotting against ``fit.actual_``.
@@ -180,6 +180,55 @@ class LeaveOneOutResult:
     most_influential: str | None
     sign_stable: bool
     paths: pl.DataFrame
+    lambda_at_boundary: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlaceboInSpaceResult:
+    """Output of :func:`placebo_in_space`.
+
+    Attributes
+    ----------
+    statistic : float
+        The treated unit's post/pre RMSPE ratio (ADH 2010, Fig. 7).
+    pvalue : float
+        Share of kept units (placebos plus the treated unit itself) whose
+        ratio is at least ``statistic``: ``#{ratio >= statistic} /
+        (J_kept + 1)``. Its floor is ``1 / (J_kept + 1)``.
+    ratios : pl.DataFrame
+        One row per unit — the treated unit first, then donors in
+        ``fit.units_`` order. Columns:
+
+        - ``unit`` (str), ``is_treated`` (bool).
+        - ``rmspe_pre`` / ``rmspe_post`` (f64): raw RMSPE on the outcome
+          scale over the pre / post periods; null on error.
+        - ``ratio`` (f64): ``rmspe_post / rmspe_pre`` (``inf`` for a perfect
+          pre-fit with post error, ``nan`` for 0/0); null on error.
+        - ``rank`` (i64): 1 for the largest ratio among kept units, ties share
+          the smaller rank; null for discarded or errored rows.
+        - ``discarded`` (bool): dropped by ``mspe_limit``.
+        - ``lambda_`` (f64): ridge penalty the refit used (AugSynth); null
+          otherwise.
+        - ``error`` (str): ``"ExcType: message"`` under
+          ``on_error="record"``; null otherwise.
+    gaps : pl.DataFrame
+        Long frame ``unit, period, gap`` (actual minus synthetic) for the
+        treated unit and every successful placebo — the ADH "spaghetti" plot
+        data.
+    discarded : tuple[str, ...]
+        Donors excluded by ``mspe_limit``.
+    mspe_limit : float or None
+        The limit that was applied.
+    lambda_at_boundary : tuple[str, ...]
+        Placebo units whose refit selected a CV penalty at the grid edge.
+    """
+
+    statistic: float
+    pvalue: float
+    ratios: pl.DataFrame
+    gaps: pl.DataFrame
+    discarded: tuple[str, ...]
+    mspe_limit: float | None
     lambda_at_boundary: tuple[str, ...]
 
 
@@ -227,6 +276,12 @@ def _ratio(pre: float, post: float) -> float:
     if pre > 0.0:
         return post / pre
     return float("inf") if post > 0.0 else float("nan")
+
+
+def _lambda_of(est: Any) -> float | None:
+    """Ridge penalty of a fitted estimator as a float; None if it has none (Synth)."""
+    lam = getattr(est, "lambda_", None)
+    return None if lam is None else float(lam)
 
 
 def _refit(
@@ -458,7 +513,6 @@ def leave_one_out(
             )
             continue
         att = float(fitted.att_)
-        lam = getattr(fitted, "lambda_", None)
         rows.append(
             {
                 "dropped_unit": d,
@@ -466,7 +520,7 @@ def leave_one_out(
                 "att": att,
                 "delta_att": att - att_full,
                 "rmspe_pre": float(fitted.rmspe_pre_),
-                "lambda_": None if lam is None else float(lam),
+                "lambda_": _lambda_of(fitted),
                 "error": None,
             }
         )
@@ -517,5 +571,206 @@ def leave_one_out(
         most_influential=most,
         sign_stable=sign_stable,
         paths=paths,
+        lambda_at_boundary=at_boundary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# placebo_in_space
+# ---------------------------------------------------------------------------
+
+
+def placebo_in_space(
+    fit: _RefittableSC,
+    *,
+    mspe_limit: float | None = None,
+    n_jobs: int = 1,
+    on_error: OnError = "raise",
+) -> PlaceboInSpaceResult:
+    """In-space placebo test of whether the treated unit's gap is unusual among donors.
+
+    Reassigns treatment to each donor in turn (with the real treated unit
+    removed from the pool), refits, and compares the treated unit's post/pre
+    RMSPE ratio with the placebo ratios (Abadie, Diamond & Hainmueller 2010,
+    §III.B; Abadie 2021, §5). The ratio statistic rewards a large
+    post-treatment gap only relative to the pre-treatment fit, so a placebo
+    with a poor pre-fit does not look like a large effect.
+
+    Parameters
+    ----------
+    fit
+        A fitted :class:`~augsynth_py.Synth` or :class:`~augsynth_py.AugSynth`.
+        Never modified; every refit works on a deep copy (see
+        :func:`leave_one_out` for the configuration carry-over).
+    mspe_limit : float, optional
+        If given, placebos whose pre-period MSPE is at least ``mspe_limit``
+        times the treated unit's are discarded before ranking (ADH 2010 use
+        20, 5, 2; R ``SCtools`` uses ``>=`` with default 20). None (default)
+        keeps every placebo, following Abadie (2021).
+    n_jobs : int, optional
+        Parallel workers for the refits (:class:`joblib.Parallel`).
+    on_error : {"raise", "record"}, optional
+        See :func:`leave_one_out`. Errored placebos are excluded from the
+        rank and the p-value.
+
+    Returns
+    -------
+    PlaceboInSpaceResult
+
+    Raises
+    ------
+    TypeError
+        If ``fit`` does not expose the refit contract.
+    ValueError
+        If the fit has fewer than two donors (no pool is left for a placebo),
+        ``mspe_limit`` is not positive, or ``on_error`` is invalid.
+
+    Notes
+    -----
+    The p-value is a rank statistic with a floor of ``1 / (J_kept + 1)``:
+    with 9 donors the smallest attainable value is 0.1. It is an exact
+    permutation-style quantity under the hypothesis that treatment was
+    assigned at random among the units, and is reported as such — see
+    ``docs/methodology.md`` §7.
+    """
+    _check_refittable(fit)
+    record = _check_on_error(on_error)
+    if mspe_limit is not None and not mspe_limit > 0:
+        raise ValueError(f"mspe_limit must be positive; got {mspe_limit!r}.")
+    _units, _t_idx, treated_label, donor_idx, donors = _split_units(fit)
+    if len(donors) < 2:
+        raise ValueError(
+            "placebo_in_space needs at least two donors: with a single donor there is no pool "
+            "left to build a placebo from once that donor is the pseudo-treated unit."
+        )
+
+    y = np.asarray(fit._y_matrix, dtype=np.float64)
+    pool = wide_to_long(y[:, donor_idx], donors, fit.periods_)  # real treated unit removed
+    runs = _run_all(n_jobs, fit, [(pool, d) for d in donors], fit.treatment_time_, record)
+
+    pre = np.asarray(fit.pre_mask_, dtype=bool)
+    t_pre = _rmspe(fit.actual_, fit.synthetic_, pre)
+    t_post = _rmspe(fit.actual_, fit.synthetic_, ~pre)
+    statistic = _ratio(t_pre, t_post)
+
+    rows: list[dict[str, Any]] = [
+        {
+            "unit": treated_label,
+            "is_treated": True,
+            "rmspe_pre": t_pre,
+            "rmspe_post": t_post,
+            "ratio": statistic,
+            "lambda_": _lambda_of(fit),
+            "error": None,
+        }
+    ]
+    gap_units: list[str] = [treated_label]
+    gap_values: list[NDArray[np.float64]] = [
+        np.asarray(fit.actual_, dtype=np.float64) - np.asarray(fit.synthetic_, dtype=np.float64)
+    ]
+    for d, (fitted, _msgs, err) in zip(donors, runs, strict=True):
+        if fitted is None:
+            rows.append(
+                {
+                    "unit": d,
+                    "is_treated": False,
+                    "rmspe_pre": None,
+                    "rmspe_post": None,
+                    "ratio": None,
+                    "lambda_": None,
+                    "error": err,
+                }
+            )
+            continue
+        p_mask = np.asarray(fitted.pre_mask_, dtype=bool)
+        p_pre = _rmspe(fitted.actual_, fitted.synthetic_, p_mask)
+        p_post = _rmspe(fitted.actual_, fitted.synthetic_, ~p_mask)
+        rows.append(
+            {
+                "unit": d,
+                "is_treated": False,
+                "rmspe_pre": p_pre,
+                "rmspe_post": p_post,
+                "ratio": _ratio(p_pre, p_post),
+                "lambda_": _lambda_of(fitted),
+                "error": None,
+            }
+        )
+        gap_units.append(d)
+        gap_values.append(
+            np.asarray(fitted.actual_, dtype=np.float64)
+            - np.asarray(fitted.synthetic_, dtype=np.float64)
+        )
+
+    # Discard rule (ADH 2010 / SCtools): pre-MSPE at least `mspe_limit` times
+    # the treated unit's. Never applies to the treated row or to errored rows.
+    discarded_flags: list[bool] = []
+    for r in rows:
+        if r["is_treated"] or r["error"] is not None or mspe_limit is None:
+            discarded_flags.append(False)
+        else:
+            discarded_flags.append(bool(float(r["rmspe_pre"]) ** 2 >= mspe_limit * t_pre**2))
+
+    kept_ratios = np.array(
+        [
+            float(r["ratio"])
+            for r, disc in zip(rows, discarded_flags, strict=True)
+            if r["error"] is None and not disc
+        ],
+        dtype=np.float64,
+    )
+    pvalue = float(np.sum(kept_ratios >= statistic) / len(kept_ratios))
+    ranks: list[int | None] = [
+        None
+        if (r["error"] is not None or disc)
+        else 1 + int(np.sum(kept_ratios > float(r["ratio"])))
+        for r, disc in zip(rows, discarded_flags, strict=True)
+    ]
+
+    ratios = pl.DataFrame(
+        rows,
+        schema={
+            "unit": pl.String,
+            "is_treated": pl.Boolean,
+            "rmspe_pre": pl.Float64,
+            "rmspe_post": pl.Float64,
+            "ratio": pl.Float64,
+            "lambda_": pl.Float64,
+            "error": pl.String,
+        },
+    ).with_columns(
+        pl.Series("rank", ranks, dtype=pl.Int64),
+        pl.Series("discarded", discarded_flags, dtype=pl.Boolean),
+    )
+    ratios = ratios.select(
+        "unit",
+        "is_treated",
+        "rmspe_pre",
+        "rmspe_post",
+        "ratio",
+        "rank",
+        "discarded",
+        "lambda_",
+        "error",
+    )
+
+    n_periods = len(fit.periods_)
+    gaps = pl.DataFrame(
+        {
+            "unit": [u for u in gap_units for _ in range(n_periods)],
+            "period": _tiled_periods(fit, len(gap_units)),
+            "gap": np.concatenate(gap_values),
+        },
+        schema_overrides={"unit": pl.String, "gap": pl.Float64},
+    )
+    discarded = tuple(str(r["unit"]) for r, disc in zip(rows, discarded_flags, strict=True) if disc)
+    at_boundary = _surface_warnings(donors, [m for _f, m, _e in runs])
+    return PlaceboInSpaceResult(
+        statistic=statistic,
+        pvalue=pvalue,
+        ratios=ratios,
+        gaps=gaps,
+        discarded=discarded,
+        mspe_limit=mspe_limit,
         lambda_at_boundary=at_boundary,
     )

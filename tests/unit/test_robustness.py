@@ -162,3 +162,114 @@ def test_loo_requires_a_fitted_estimator() -> None:
         leave_one_out(object())  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="fitted"):
         leave_one_out(Synth())  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# placebo_in_space
+# ---------------------------------------------------------------------------
+
+
+def _raw_rmspe(est: Synth, post: bool) -> float:
+    mask = ~est.pre_mask_ if post else est.pre_mask_
+    return float(np.sqrt(np.mean((est.actual_[mask] - est.synthetic_[mask]) ** 2)))
+
+
+def test_placebo_matches_manual_refits_and_pvalue_convention(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = fit_synth(panel)
+    res = placebo_in_space(fit)
+
+    assert res.ratios.columns == [
+        "unit",
+        "is_treated",
+        "rmspe_pre",
+        "rmspe_post",
+        "ratio",
+        "rank",
+        "discarded",
+        "lambda_",
+        "error",
+    ]
+    # Treated row first, then donors in fit.units_ order.
+    assert res.ratios["unit"].to_list() == ["u0", "u1", "u2", "u3", "u4", "u5", "u6"]
+    assert res.ratios["is_treated"].to_list() == [True] + [False] * 6
+    assert res.statistic == pytest.approx(_raw_rmspe(fit, True) / _raw_rmspe(fit, False))
+    assert res.ratios["ratio"][0] == res.statistic
+
+    pool = panel.filter(pl.col(UNIT) != "u0")  # the treated unit leaves the pool
+    for row in res.ratios.filter(~pl.col("is_treated")).iter_rows(named=True):
+        manual = fit_synth(pool, treated=row["unit"])
+        assert row["rmspe_pre"] == pytest.approx(_raw_rmspe(manual, False), abs=1e-9)
+        assert row["rmspe_post"] == pytest.approx(_raw_rmspe(manual, True), abs=1e-9)
+        assert row["ratio"] == pytest.approx(row["rmspe_post"] / row["rmspe_pre"])
+        gap = res.gaps.filter(pl.col("unit") == row["unit"]).sort("period")["gap"].to_numpy()
+        np.testing.assert_allclose(gap, manual.actual_ - manual.synthetic_, atol=1e-9)
+        assert row["error"] is None and row["discarded"] is False
+
+    ratios = res.ratios["ratio"].to_numpy()
+    expected_p = np.sum(ratios >= res.statistic) / len(ratios)  # treated included
+    assert res.pvalue == expected_p
+    assert res.pvalue >= 1 / 7
+    ranks = res.ratios["rank"].to_list()
+    assert sorted(ranks) == list(range(1, 8))
+    assert ranks[0] == 1 + int(np.sum(ratios > res.statistic))
+    assert res.discarded == ()
+    assert res.mspe_limit is None
+    assert res.gaps.columns == ["unit", "period", "gap"]
+    assert res.gaps.height == 7 * N_PERIODS
+
+
+def test_placebo_statistic_is_extreme_for_a_real_effect(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    big = panel.with_columns(
+        pl.when((pl.col(UNIT) == "u0") & (pl.col(TIME) >= T0))
+        .then(pl.col(OUT) * 1.5)
+        .otherwise(pl.col(OUT))
+        .alias(OUT)
+    )
+    res = placebo_in_space(fit_synth(big))
+    assert res.ratios["rank"][0] == 1
+    assert res.pvalue == pytest.approx(1 / 7)
+
+
+def test_placebo_mspe_limit_discards_and_recomputes(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    fit = fit_synth(panel)
+    base = placebo_in_space(fit)
+    t_pre = base.ratios["rmspe_pre"][0]
+    pre_mspe_ratio = (base.ratios["rmspe_pre"].to_numpy() / t_pre) ** 2
+    donors_only = pre_mspe_ratio[1:]
+    limit = float(np.sort(donors_only)[3])  # discards the top 3 by >= (SCtools convention)
+    expected_discard = {
+        u for u, r in zip(base.ratios["unit"][1:], donors_only, strict=True) if r >= limit
+    }
+    assert len(expected_discard) == 3
+
+    res = placebo_in_space(fit, mspe_limit=limit)
+    assert set(res.discarded) == expected_discard
+    assert res.mspe_limit == limit
+    disc = res.ratios.filter(pl.col("discarded"))
+    assert set(disc["unit"]) == expected_discard
+    assert disc["rank"].null_count() == disc.height
+    kept = res.ratios.filter(~pl.col("discarded"))
+    assert kept.height == 4
+    kept_ratios = kept["ratio"].to_numpy()
+    assert res.pvalue == np.sum(kept_ratios >= res.statistic) / 4
+    assert sorted(kept["rank"].to_list()) == [1, 2, 3, 4]
+    # The treated row is never discarded.
+    assert res.ratios.filter(pl.col("is_treated"))["discarded"][0] is False
+
+    with pytest.raises(ValueError, match="mspe_limit"):
+        placebo_in_space(fit, mspe_limit=0.0)
+
+
+def test_placebo_needs_two_donors() -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    two = make_panel().filter(pl.col(UNIT).is_in(["u0", "u1"]))
+    fit = fit_synth(two)
+    with pytest.raises(ValueError, match="at least two donors"):
+        placebo_in_space(fit)
