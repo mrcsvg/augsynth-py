@@ -768,3 +768,206 @@ to use strict $<$ at a tie, revisit `PowerResults.power_curve`.
 | `side_of_test`          | `side` (`"one_sided"` + positive lifts ≈ `"right"`) |
 | `alpha`                 | `alpha` (same default, 0.1)                       |
 | `cpic`, investment      | out of scope — design costing lives in `geoexp`   |
+
+## 7. Robustness checks (placebo in-space, leave-one-out)
+
+**References:** Abadie, Diamond & Hainmueller (2010, §III.B) for the
+in-space placebo and the post/pre RMSPE ratio; Abadie (2021, §5) for the
+rank p-value and the argument against discarding poor-fit placebos; Abadie,
+Diamond & Hainmueller (2015, §4.4) and Abadie (2021, §6) for the
+leave-one-out check. R `SCtools` (`generate.placebos`, `mspe.test`) is the
+oracle for the aggregation arithmetic only.
+
+**Code location:** `src/augsynth_py/robustness.py` (`placebo_in_space`,
+`leave_one_out`), unit-tested in `tests/unit/test_robustness.py`, validated
+in `tests/validation_against_r/test_robustness.py`.
+
+Both diagnostics operate on a *fitted* estimator. The module rebuilds the
+long panel the estimator saw from its stored outcome matrix
+(`synth/_panel.py::wide_to_long`, the inverse of `long_to_wide`) and refits a
+`copy.deepcopy` of the estimator on a modified panel. The estimator's
+configuration is therefore unchanged in every refit: an `AugSynth` with a
+cross-validated penalty re-runs the CV in each placebo; one constructed with
+`lambda_=x` keeps `x`. The attributes the refit reads — the public `units_`,
+`periods_`, `treatment_time_`, `actual_`, `synthetic_`, `pre_mask_`,
+`weights_`, `att_`, `rmspe_pre_` and the two underscore attributes
+`_y_matrix`, `_treated_idx` — are the same scaffolding
+`conformal_null_residuals` uses; they are documented in
+`robustness._RefittableSC` as the extension point. The Protocol stays
+private in this release because it names underscore attributes that have
+not been promoted to public API; a public Protocol is a one-line addition
+once they are. Donors are reported by the string labels in `fit.units_`
+(`long_to_wide` stringifies unit values), so an integer unit `7` appears as
+`"7"`; explicit `donors=[...]` lists are compared after `str()` and
+deduplicated preserving order.
+
+### 7.1 Placebo in-space
+
+For a treated unit $1$ and donors $j = 2, \dots, J+1$, each donor is in turn
+designated treated at the same $T_0$, with the real treated unit removed
+from the pool (ADH 2010 §III.B). For every fit the statistic is
+
+$$
+r_j = \frac{\mathrm{RMSPE}_{\text{post}}(j)}{\mathrm{RMSPE}_{\text{pre}}(j)},
+\qquad
+\mathrm{RMSPE}_{\cdot}(j) = \sqrt{\tfrac{1}{|\cdot|}\sum_{t \in \cdot}(Y_{jt} - \hat Y^{N}_{jt})^2},
+$$
+
+on the raw outcome scale (ADH 2010, Fig. 7). R `SCtools::mspe.test` reports
+$r_j^2$ (a ratio of MSPEs); since the square is monotone, ranks and the
+p-value are identical and the parity test compares $r_j^2$.
+
+The p-value is the rank statistic of Abadie (2021, §5), with the treated
+unit counted among the $J+1$ units:
+
+$$
+p = \frac{\#\{\, j \in \{1, \dots, J+1\} : r_j \ge r_1 \,\}}{J + 1},
+$$
+
+so $p \ge 1/(J+1)$ and the treated unit's own ratio always contributes one
+to the numerator. This matches `SCtools::mspe.test` (`sum(ratios >=
+treated) / nrow`). It is an exact test under random assignment of treatment
+among the $J+1$ units — a design hypothesis, not a sampling one — and is
+reported as such.
+
+**Undefined and infinite ratios.** A perfect pre-period fit gives
+$r_j = \infty$; it is kept and ranks first ($\infty \ge \infty$ is true). A
+placebo with zero pre- *and* post-period RMSPE has an undefined $0/0$ ratio
+(`nan`); it is excluded from the rank and from the denominator of $p$,
+since `nan` compares false against everything and would otherwise rank first
+while padding $J$. If the *treated* statistic is undefined, `pvalue` is
+`nan`, the treated rank is null, and a warning is emitted; the fit itself
+is valid, only the ratio test is undefined, so this is not an error.
+
+**Discard rule.** `mspe_limit = k` drops placebos with
+$(\mathrm{RMSPE}_{\text{pre}}(j) / \mathrm{RMSPE}_{\text{pre}}(1))^2 \ge k$
+before ranking, the ADH 2010 practice ($k = 20, 5, 2$; `SCtools` uses `>=`
+with default 20). The default is *no* discard: Abadie (2021) notes the ratio
+already penalises a poor pre-period fit, and discarding changes $J$ and
+hence the floor of $p$. Discarded units stay in the `ratios` frame with
+`discarded = True` and a null rank; the treated row is never discarded.
+The rule is evaluated as `(pre_j / pre_1)**2 >= k` while `SCtools`
+evaluates `pre_j**2 / pre_1**2 >= k`; the two differ by a few ulps
+(≤ 3.5e-16 relative on the fixture, whose nearest placebos sit at 5.43 and
+1.88 for $k = 5, 2$), so no flip is possible there. Bit-matching the
+`SCtools` form is a recorded follow-up.
+
+**Treated groups.** The treated column is the group mean (`long_to_wide`),
+so the placebo pool is every unit not in the group; the result labels the
+treated row with the comma-joined group label.
+
+### 7.2 Leave-one-out donors
+
+Each donor with $|w_j| > \texttt{tol}$ in the full fit is dropped in turn
+and the estimator refit on the remaining pool (ADH 2015 §4.4; Abadie 2021
+§6). The default `tol = 1e-6` exists because "nonzero" needs a threshold:
+Clarabel at its default tolerances leaves about $10^{-7}$ (measured
+1.2e-7 to 2.7e-7 on the test panel) on weights that are zero in exact
+arithmetic, so a threshold of $10^{-8}$ would select every donor;
+$10^{-6}$ is negligible against weights that sum to one. The result
+reports the ATT of every refit, its difference to the full ATT
+(`att_full` is carried on the result so `delta_att` is self-explanatory),
+the envelope $(\min, \max)$ over refits, whether the sign survives, and the
+donor whose removal moves the ATT most (`most_influential`; ties go to the
+first dropped donor in order, and refits with a non-finite ATT are excluded
+from both the envelope and the choice). The last item is the point: a
+"range" reported without attribution hides a contaminated donor — in the
+NR-35 application the less-negative end of the leave-one-out range *was* a
+single donor carrying the Brumadinho dam failure (2019), which only became
+visible once that donor was named.
+
+For `AugSynth`, "nonzero" includes negative weights (the ridge correction is
+part of the effective weights, BFR 2021 §2.4). Under `fixedeff=True` with
+trend-sharing donors, several weight vectors fit the pre-period equally
+well; the diagnostic reads the ATT, which is unique up to the pre-period fit,
+so the solver's choice among equivalent weights does not matter.
+
+### 7.3 Warnings and errors
+
+Refits run in `joblib` workers, which cannot surface warnings to the caller.
+Each refit records its warnings; the module then emits **one** summary per
+call for `AugSynth`'s "λ at the grid boundary" diagnostic (naming the
+affected refits, also stored on the result as `lambda_at_boundary`) and
+re-emits any other warning text once. `on_error="record"` keeps failed refits
+as rows with an `error` column and excludes them from ranks and p-values —
+errored placebos leave the denominator of $p$, an extension `SCtools` has no
+counterpart for; `"raise"` (default) propagates the first failure. When no
+placebo survives the discard rule, refit errors and undefined ratios, the
+comparison set is the treated unit alone, $p = 1$ as in `SCtools`, and a
+warning says the p-value is uninformative. The `lambda_` column on both
+result frames makes the penalty policy observable per refit.
+
+### 7.4 Validation
+
+The classical `Synth` oracle in this repository is `augsynth(progfunc =
+'None', scm = TRUE)` (§1), not R `Synth`. `SCtools` consumes
+`Synth::dataprep`/`synth` objects whose optimizer (ipop, nested $V$
+optimisation) does not reproduce our simplex QP bit for bit, so "direct
+SCtools parity" at repository tolerance is not available. Validation is in
+three layers:
+
+1. **Refits by composition.** For three pseudo-treated units and three
+   dropped donors on `GeoLift_PreTest`, the refit's counterfactual path
+   equals R `augsynth` on the same modified panel at the standard path
+   tolerance (`atol = rtol = 1e-4`), and the refit ATT at the README's ATT
+   tolerance (`abs = rel = 1e-4`; an absolute-only `1e-4` sits at the
+   Clarabel-vs-R noise floor, 2.6e-4 on an ATT of about −104 without
+   `baton rouge`). This exercises `wide_to_long` and the deepcopy-refit
+   path, not only the estimator.
+2. **Aggregation exact vs `SCtools::mspe.test`.** A `tdf` object is built in
+   R from *our* fitted series (placebo synthetics and actuals, treated
+   actual and synthetic, our pre-period MSPEs as `mspe.placs` / `loss.v`;
+   `SCtools:::is_tdf` is `inherits(x, "tdf")`, so a classed list suffices).
+   R recomputes `mspe.placs` and `loss.v` from the pre rows and checks them
+   against ours at `1e-12` before `mspe.test` runs, so the denominators are
+   oracle-verified rather than supplied. `mspe.test` then only computes the
+   ratios and the rank p-value, which must equal ours exactly
+   (`rtol = 1e-12` on $r_j^2$, `==` on $p$), with and without
+   `discard.extreme` (`mspe_limit` None / 5 / 2; 5 discards 6 and 2
+   discards 9 of 39 placebos). Measured: ratios within 6.3e-16 relative,
+   p-values equal. This pins the convention independent of any solver.
+3. **Characterization.** A genuine `generate.placebos` run on `Synth::synth`
+   with each of the 45 pre-period outcomes as a `special.predictors` entry
+   (`predictors = NULL`, accepted by `dataprep`). Recorded on
+   `GeoLift_PreTest`, `new york` treated from 2021-02-15, against
+   `Synth(fixedeff=False)` on our side — R `Synth` has no unit demeaning, so
+   that is the comparable variant; against the `fixedeff=True` fit used by
+   layers 1 and 2 the rank agreement is only ρ = 0.7617, which the test
+   also prints. Three harness details, found while setting the run up:
+
+   - `controls.identifier` must be passed **sorted**. `dataprep` returns
+     `X0`, `Z0` and `Y0plot` in sorted-id order whatever order it was given,
+     but `names.and.numbers` (and `colnames(X0)`) keep the given order, and
+     `generate.placebos` indexes the matrices by position while labelling
+     placebo $i$ from `names.and.numbers[i]`. With the natural
+     `setdiff(unique(id), treated)` every one of the 39 placebos carried
+     another unit's name, and the comparison read ρ = −0.03 (pre-period MSPEs
+     negatively correlated across the two sides — the tell, since fit
+     difficulty is a property of the unit). The ratios themselves are right;
+     only the labels are scrambled.
+   - `Sigf.ipop = 4` rather than `Synth`'s default 5, on the treated fit and
+     the placebos alike: with 45 single-period predictors on 38 donors the
+     inner QP matrix $X_0^\top V X_0$ has reciprocal condition number about
+     $5 \cdot 10^{-8}$, and `kernlab::ipop` at five significant digits
+     diverges on one placebo (`infinite or missing values in 'x'` from its
+     iterate-norm `svd`); it converges at 3 and 4 and fails at 5, 6 and 7.
+     Precision is the only ipop knob `generate.placebos` exposes.
+   - `generate.placebos` runs the 40 nested-$V$ fits in about 80–120 s.
+
+   | quantity | value |
+   |---|---|
+   | Spearman ρ between our $r_j^2$ and SCtools's | 0.9739 |
+   | median relative gap in $r_j^2$ | 0.02114 |
+   | our $p$ | 0.8250 (33/40) |
+   | SCtools/ipop $p$ | 0.7750 (31/40) |
+
+   The test asserts only ρ > 0.9. The residual gap is the ipop-vs-Clarabel
+   solver difference (nested $V$ weighting of 45 predictors versus the
+   outcome-only simplex QP of §1); the larger gap under `fixedeff=True` adds
+   R `Synth`'s lack of unit demeaning. Neither is a defect of either
+   implementation, and it is why layer 2 is the parity claim.
+
+The repository's validation rule speaks of *estimators*. These functions are
+diagnostics over estimators that already have parity tests; they satisfy the
+rule by composition (layer 1) plus an oracle for the aggregation where one
+exists (layer 2) — the reading the `geoexp` sibling already adopted.

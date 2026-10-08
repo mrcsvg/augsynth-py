@@ -112,7 +112,10 @@ def _build_tdf_in_r(r_session: Any, fit: Any, ps: Any) -> list[str]:
 
     Period index 0..T-1 plays the role of ``year``; ``t1`` is the first post
     index. ``mspe.placs`` and ``loss.v`` are our own pre-period MSPEs, so the
-    only thing SCtools computes is the post/pre ratio and the rank p-value.
+    only thing SCtools computes is the post/pre ratio and the rank p-value;
+    R nevertheless recomputes both denominators from the pre rows and checks
+    them against ours (the ``stopifnot`` block), so they are oracle-verified
+    rather than merely supplied.
     ``SCtools:::is_tdf`` is ``inherits(x, "tdf")`` (0.3.3.1), so a classed
     list with the fields ``mspe.test`` reads is enough. Returns the placebo
     units in ``tdf`` column order.
@@ -211,3 +214,97 @@ def test_placebo_aggregation_matches_sctools_mspe_test_exactly(
     np.testing.assert_allclose([ours[u] for u in r_units], r_ratios, rtol=1e-12, atol=0)
     assert ps.pvalue == r_p
     assert set(ps.discarded) == set(placebos) - set(r_units)
+
+
+@pytest.mark.requires_r_pkg("SCtools", "Synth", "GeoLift")
+def test_characterize_against_real_sctools_placebos(
+    r_session: Any, r_geolift_pretest: pl.DataFrame, ny_fit: Any
+) -> None:
+    """Layer 3: not a parity assertion. R Synth optimises V and W with ipop
+    over 45 single-period 'special predictors'; we solve the simplex QP with
+    Clarabel. Ratios differ at the solver level; ranks mostly agree. The
+    numbers this prints are recorded in docs/methodology.md §7.4.
+
+    The variant characterized is ``Synth(fixedeff=False)``, fitted here for
+    this test only: R ``Synth`` has no unit demeaning, and against the
+    ``fixedeff=True`` fixture the ranks agree only at rho ~ 0.76 (printed as
+    well, for the record). Two harness details, both explained inline in
+    the R code: ``controls.identifier`` must be sorted or SCtools labels
+    every placebo with another unit's name, and ``Sigf.ipop = 4`` because
+    ipop at Synth's default 5 diverges on one placebo.
+    """
+    from scipy.stats import spearmanr
+
+    from augsynth_py import Synth, placebo_in_space
+
+    r_session(
+        """
+        suppressPackageStartupMessages({library(Synth); library(SCtools)})
+        df <- as.data.frame(GeoLift_PreTest)
+        df$date <- as.Date(df$date)
+        df$t <- as.integer(df$date - min(df$date)) + 1L     # 1..90
+        df$id <- as.integer(factor(df$location))
+        tr <- unique(df$id[df$location == 'new york'])
+        # Sorted on purpose: dataprep returns X0 / Z0 / Y0plot in sorted-id
+        # order whatever order it was given, but names.and.numbers (and
+        # colnames(X0)) keep the given order, and generate.placebos indexes
+        # the matrices by position while labelling placebo i from
+        # names.and.numbers[i]. With an unsorted vector every placebo carries
+        # another unit's name (the ratios themselves are right). Sorting makes
+        # the two orders coincide.
+        ctrl <- sort(setdiff(unique(df$id), tr))
+        pre <- 1:45
+        sp <- lapply(pre, function(k) list('Y', k, 'mean'))
+        dp <- dataprep(foo = df, predictors = NULL, special.predictors = sp,
+                       dependent = 'Y', unit.variable = 'id', time.variable = 't',
+                       treatment.identifier = tr, controls.identifier = ctrl,
+                       time.predictors.prior = pre, time.optimize.ssr = pre,
+                       unit.names.variable = 'location', time.plot = 1:90)
+        # Sigf.ipop = 4, not Synth's default 5: with 45 single-period
+        # predictors on 38 donors the inner QP's H = X0' V X0 has rcond ~5e-8
+        # and kernlab::ipop at 5 significant digits diverges on the nashville
+        # placebo ("infinite or missing values in 'x'" from its iterate-norm
+        # svd); 3 and 4 converge, 5-7 do not. The same precision is used for
+        # the treated fit so the two sides of the ratio are comparable.
+        so <- synth(dp, Sigf.ipop = 4)
+        tdf_real <- generate.placebos(dp, so, Sigf.ipop = 4)
+        res_real <- mspe.test(tdf_real)
+        """
+    )
+    r_test = {
+        str(u): float(v)
+        for u, v in zip(
+            r_session("as.character(res_real$test$unit)"),
+            r_session("as.numeric(res_real$test$MSPE.ratios)"),
+            strict=True,
+        )
+    }
+    r_p = float(r_session("res_real$p.val")[0])
+
+    def _ratios(fit: Any) -> tuple[dict[str, float], Any]:
+        ps = placebo_in_space(fit)
+        return {row["unit"]: row["ratio"] ** 2 for row in ps.ratios.iter_rows(named=True)}, ps
+
+    def _rho(ours: dict[str, float]) -> float:
+        common = sorted(set(ours) & set(r_test))
+        assert len(common) == len(ours), "SCtools and we must rank the same units"
+        return float(spearmanr([ours[u] for u in common], [r_test[u] for u in common]).statistic)
+
+    nofe_fit = Synth(fixedeff=False).fit(
+        _panel(r_geolift_pretest),
+        unit="location",
+        time="date",
+        outcome="Y",
+        treated=TREATED,
+        treatment_time=T_DATE,
+    )
+    ours, ps = _ratios(nofe_fit)
+    rho = _rho(ours)
+    rel_gap = float(np.median([abs(ours[u] - r_test[u]) / r_test[u] for u in ours]))
+    rho_fe = _rho(_ratios(ny_fit)[0])
+    print(
+        f"\n[layer 3] spearman rho={rho:.4f}  median |rel gap| in MSPE ratio={rel_gap:.4f}  "
+        f"p(ours)={ps.pvalue:.4f}  p(SCtools/ipop)={r_p:.4f}  "
+        f"[rho with fixedeff=True: {rho_fe:.4f}]"
+    )
+    assert rho > 0.9  # loose by design; see docstring
