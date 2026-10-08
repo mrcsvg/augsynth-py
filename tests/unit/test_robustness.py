@@ -9,6 +9,7 @@ tests/validation_against_r/test_robustness.py.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -403,12 +404,15 @@ def test_on_error_raise_propagates_and_record_keeps_going(panel: pl.DataFrame) -
     kept = res.ratios.filter(pl.col("error").is_null())["ratio"].to_numpy()
     assert res.pvalue == np.sum(kept >= res.statistic) / 6
     assert "u2" not in set(res.gaps["unit"])
+    # The error row must come back from a loky worker exactly as it does inline.
+    par = placebo_in_space(fit, on_error="record", n_jobs=2)
+    assert_frame_equal(res.ratios, par.ratios, check_exact=True)
 
     with pytest.raises(ValueError, match="on_error"):
         placebo_in_space(fit, on_error="ignore")  # type: ignore[arg-type]
 
 
-def test_loo_on_error_record(panel: pl.DataFrame) -> None:
+def test_loo_on_error_raise_on_empty_pool(panel: pl.DataFrame) -> None:
     from augsynth_py.exceptions import EmptyDonorPoolError
     from augsynth_py.robustness import leave_one_out
 
@@ -426,12 +430,12 @@ def test_parallel_matches_sequential(panel: pl.DataFrame) -> None:
 
     fit = fit_synth(panel)
     seq, par = placebo_in_space(fit), placebo_in_space(fit, n_jobs=2)
-    assert_frame_equal(seq.ratios, par.ratios)
-    assert_frame_equal(seq.gaps, par.gaps)
+    assert_frame_equal(seq.ratios, par.ratios, check_exact=True)
+    assert_frame_equal(seq.gaps, par.gaps, check_exact=True)
     assert seq.pvalue == par.pvalue
     lseq, lpar = leave_one_out(fit, donors="all"), leave_one_out(fit, donors="all", n_jobs=2)
-    assert_frame_equal(lseq.att, lpar.att)
-    assert_frame_equal(lseq.paths, lpar.paths)
+    assert_frame_equal(lseq.att, lpar.att, check_exact=True)
+    assert_frame_equal(lseq.paths, lpar.paths, check_exact=True)
 
 
 def test_prototype_is_never_refit_in_place(panel: pl.DataFrame) -> None:
@@ -444,6 +448,24 @@ def test_prototype_is_never_refit_in_place(panel: pl.DataFrame) -> None:
     assert fit.att_ == before[0]
     assert fit.weights_ == before[1]
     np.testing.assert_array_equal(fit.synthetic_, before[2])
+
+    # A CV prototype re-runs the CV in every refit; none of it may leak back.
+    # The default grid lands on its boundary for this panel, so the fit and the
+    # refits warn; those warnings are not what this test is about.
+    with pytest.warns(UserWarning):
+        cv = AugSynth().fit(
+            panel, unit=UNIT, time=TIME, outcome=OUT, treated="u0", treatment_time=T0
+        )
+    assert cv.lambda_cv_path_ is not None
+    snapshot = (cv.att_, dict(cv.weights_), cv.lambda_, cv.lambda_cv_path_.copy())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        placebo_in_space(cv)
+        leave_one_out(cv, donors="all")
+    assert cv.att_ == snapshot[0]
+    assert cv.weights_ == snapshot[1]
+    assert cv.lambda_ == snapshot[2]
+    np.testing.assert_array_equal(cv.lambda_cv_path_, snapshot[3])
 
 
 def test_treated_group_is_collapsed_and_excluded(panel: pl.DataFrame) -> None:
@@ -486,7 +508,20 @@ def test_augsynth_lambda_policy_follows_the_prototype(panel: pl.DataFrame) -> No
     assert len(summary) == 1
     assert not any(str(w.message).startswith("CV-selected lambda") for w in rec)
     assert set(loo_cv.lambda_at_boundary) == {f"u{i}" for i in range(1, 7)}
-    assert set(loo_cv.att["lambda_"].to_list()) <= set(grid.tolist())
+    # The boundary warning from every refit is the evidence that CV re-ran in
+    # each one: on this grid the prototype's lambda equals the refits' lambda,
+    # so the values alone could not tell a re-run from a copy. Only check that
+    # every refit reported one.
+    assert loo_cv.att["lambda_"].null_count() == 0
+
+    # Warnings raised inside loky workers must reach the caller the same way.
+    with pytest.warns(UserWarning) as rec_par:
+        loo_par = leave_one_out(cv, donors="all", n_jobs=2)
+    summary_par = [
+        w for w in rec_par if "refits selected a lambda at the boundary" in str(w.message)
+    ]
+    assert len(summary_par) == 1
+    assert set(loo_par.lambda_at_boundary) == set(loo_cv.lambda_at_boundary)
 
 
 def test_result_types_are_frozen(panel: pl.DataFrame) -> None:
@@ -501,3 +536,45 @@ def test_result_types_are_frozen(panel: pl.DataFrame) -> None:
         ps.pvalue = 0.0  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         loo.att_full = 0.0  # type: ignore[misc]
+
+
+class _Noisy(Synth):
+    """Synth that emits a custom diagnostic warning on every fit."""
+
+    def fit(self, panel: pl.DataFrame, **kw: Any) -> Synth:  # type: ignore[override]
+        warnings.warn("custom diagnostic", UserWarning, stacklevel=2)
+        return super().fit(panel, **kw)
+
+
+def test_non_boundary_warnings_are_reemitted_once_with_labels(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    with pytest.warns(UserWarning, match="custom diagnostic"):
+        fit = _Noisy().fit(
+            panel, unit=UNIT, time=TIME, outcome=OUT, treated="u0", treatment_time=T0
+        )
+    with pytest.warns(UserWarning) as rec:
+        placebo_in_space(fit)
+    # Six refits each warned once; the caller sees a single aggregated warning.
+    assert len(rec) == 1
+    message = str(rec[0].message)
+    assert "custom diagnostic" in message
+    assert "raised in 6 refit(s)" in message
+    assert all(f"u{i}" in message for i in range(1, 7))
+
+
+def test_treated_group_gaps_use_the_collapsed_series(panel: pl.DataFrame) -> None:
+    from augsynth_py.robustness import placebo_in_space
+
+    group = ["u0", "u1"]
+    fit = fit_synth(panel, treated=group)
+    res = placebo_in_space(fit)
+
+    treated_gap = res.gaps.filter(pl.col("unit") == "u0,u1").sort("period")["gap"].to_numpy()
+    np.testing.assert_array_equal(treated_gap, fit.actual_ - fit.synthetic_)
+    # Placebos refit on the pool with the whole treated group removed.
+    pool = panel.filter(~pl.col(UNIT).is_in(group))
+    for d in ["u2", "u3", "u4", "u5", "u6"]:
+        manual = fit_synth(pool, treated=d)
+        gap = res.gaps.filter(pl.col("unit") == d).sort("period")["gap"].to_numpy()
+        np.testing.assert_allclose(gap, manual.actual_ - manual.synthetic_, atol=1e-9)
