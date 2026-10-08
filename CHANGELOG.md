@@ -12,9 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The v0.6 milestone: refit-based robustness checks on a fitted estimator
 (`augsynth_py.robustness`), plus the post-dominated-window diagnostic for
-conformal inference that had accumulated under Unreleased. Existing estimator
-results are unchanged; the numerical parity suite against R is unaffected and
-gains a third oracle (`SCtools`).
+conformal inference. Existing estimator results are unchanged; the R parity
+suite gains a third oracle, `SCtools` (with `Synth`, which it consumes).
 
 ### Added
 
@@ -103,6 +102,10 @@ gains a third oracle (`SCtools`).
 - `SCtools` (and `Synth`, which it consumes) joins the R validation job
   (`.github/workflows/validation.yml`) as the oracle for the placebo
   aggregation; `augsynth` remains the oracle for every refit.
+- `PlaceboInSpaceResult` and `LeaveOneOutResult` are declared
+  `@dataclass(frozen=True, eq=False)`, like `ConformalTestResult`: they hold
+  DataFrames, so the generated value `__eq__` raised `TypeError`; instances
+  now compare by identity and are hashable.
 - `docs/methodology.md` gains §5.6 for the post-dominated warning; the former
   §5.6 and §5.7 shift to §5.7 and §5.8.
 - `tests/validation_against_r/test_conformal.py` silences the new warning at

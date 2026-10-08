@@ -31,7 +31,8 @@ GeoLift-style orchestration layer in a single Python-native package.
 pip install augsynth-py
 ```
 
-For the validation test suite (requires R and the `augsynth` R package):
+For the validation test suite (requires R with the `augsynth`, `GeoLift`,
+`Synth` and `SCtools` packages; see `tests/validation_against_r/README.md`):
 
 ```bash
 pip install "augsynth-py[validation]"

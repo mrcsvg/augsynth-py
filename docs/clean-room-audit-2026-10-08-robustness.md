@@ -122,7 +122,10 @@ are explained inline in the test.
   rather than restating it.
 - [`docs/plans/2026-10-06-robustness-v0.6.md`](plans/2026-10-06-robustness-v0.6.md),
   whose "Decisions made while planning" section (items 1–16) is condensed
-  into §4 here.
+  into §4 here, and the design doc `2026-10-06-robustness-design.md` beside
+  it. Note: `docs/plans/` is gitignored, so external readers will not see
+  either file; these cross-references are for in-repo navigation, and §4
+  reproduces everything the audit relies on.
 - The module, the panel helpers and the three test files listed above.
 
 **Not consulted:** the R `augsynth` source; the R `Synth` source; any
@@ -284,7 +287,8 @@ public API rather than silently defaulted.
 
 Condensed from "Decisions made while planning" in
 [`docs/plans/2026-10-06-robustness-v0.6.md`](plans/2026-10-06-robustness-v0.6.md),
-numbering preserved. "Design" is `2026-10-06-robustness-design.md`.
+numbering preserved; item 17 was added at the final pre-tag review and is
+recorded here only. "Design" is `2026-10-06-robustness-design.md`.
 
 | # | Decision | Reason |
 |---|----------|--------|
@@ -304,6 +308,7 @@ numbering preserved. "Design" is `2026-10-06-robustness-design.md`.
 | 14 | **Follow-up, not in v0.6:** our discard rule evaluates `(pre_j/pre_1)**2 >= k`, `SCtools` evaluates `pre_j**2/pre_1**2 >= k`. | They differ by ≤ 3.5e-16 relative on the fixture; no flip possible there (nearest placebos at 5.43 and 1.88 for limits 5 and 2). Switching would bit-match `SCtools`; left out because it touches library code after review and the boundary unit test uses the current form. |
 | 15 | Layer-3 characterization: (a) `Synth(fixedeff=False)` is the variant characterized (ρ = 0.9739; median relative gap 0.02114; $p$ 0.8250 ours vs 0.7750 `SCtools`), with the `fixedeff=True` ρ = 0.7617 printed for the record; (b) `controls.identifier` passed **sorted**; (c) `Sigf.ipop = 4`, not `Synth`'s default 5. | (a) R `Synth` has no unit demeaning. (b) `dataprep` returns matrices in sorted-id order but `names.and.numbers` keeps the given order, and `generate.placebos` labels placebo $i$ by `names.and.numbers[i]` while indexing by position — unsorted ids scramble every placebo label (ρ read −0.03 before the fix); arguably a `Synth`/`SCtools` labelling bug worth reporting upstream. (c) With 45 single-period predictors on 38 donors, `kernlab::ipop` at 5 digits diverges on the `nashville` placebo; 3 and 4 converge, 5–7 fail; precision is the only ipop knob `generate.placebos` exposes. The ρ > 0.9 threshold was not touched. Wall time ≈ 90 s. Task 8. |
 | 16 | **Qualified exactness claim.** The placebo p-value is described as having the form of a permutation p-value (Abadie 2021 §5), not as an exact test. The all-discarded case gives $p = 1$ by the same formula, but no parity is claimed there. Layer-3 test marked `slow`, prints the gap at 4 significant figures, suppresses tibble messages, cleans up its R globals. | Excluding the real treated unit from every placebo pool (ADH 2010) means the treated statistic uses $J$ donors and each placebo $J-1$, so the units are not exchangeable in the strict sense. `SCtools::mspe.test` cannot run with zero placebos (its `for (i in 1:n)` with `n = 0` indexes missing columns). Task 8 review. |
+| 17 | **Two `rmspe_pre` columns, two scales — kept as they are** (final review, 2026-10-08). `LeaveOneOutResult.att["rmspe_pre"]` is the estimator's *normalized* `rmspe_pre_`; `PlaceboInSpaceResult.ratios["rmspe_pre"]` is *raw* on the outcome scale. Both column docstrings and `methodology.md` §7.2 cross-reference each other. Result dataclasses are `@dataclass(frozen=True, eq=False)`, like `ConformalTestResult`, so they compare by identity. | The leave-one-out column is a fit-quality diagnostic comparable to `fit.rmspe_pre_`; the placebo column feeds the ratio statistic, the discard rule and `SCtools::mspe.test`, which all operate on the raw scale. Renaming either would break the comparison it exists for. `eq=False` because the frames inside make the generated `__eq__` raise `TypeError`. |
 
 Decisions 3, 10, 12 and 14–16 are the ones a methodologically minded reader
 should know about; the rest are result-shape and harness engineering.
@@ -354,8 +359,9 @@ R validation job (`.github/workflows/validation.yml`) for layers 2 and 3.
 - **What the layers do not cover.** `leave_one_out` has **no oracle beyond
   composition**: R `augsynth` has no leave-one-out routine and `SCtools`
   does not implement ADH 2015 §4.4, so `att_range`, `sign_stable` and
-  `most_influential` are checked only by the 23 unit tests
-  (`tests/unit/test_robustness.py`) and by the composition argument that
+  `most_influential` are checked only by the unit suite (23 tests in
+  `tests/unit/test_robustness.py` at the time of the audit) and by the
+  composition argument that
   each refit ATT is right. The all-discarded / all-errored placebo case has
   no `SCtools` counterpart (decision 16). Neither gap is closable with the
   oracles available; both are stated.

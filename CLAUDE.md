@@ -40,6 +40,8 @@ relevant paper and equation in docstrings.
 
 - Abadie, Diamond & Hainmueller (2010). *Synthetic Control Methods for
   Comparative Case Studies*. JASA.
+- Abadie, Diamond & Hainmueller (2015). *Comparative Politics and the
+  Synthetic Control Method*. AJPS 59(2), 495–510.
 - Abadie (2021). *Using Synthetic Controls: Feasibility, Data Requirements,
   and Methodological Aspects*. JEL.
 - Ben-Michael, Feller & Rothstein (2021). *The Augmented Synthetic Control
@@ -96,9 +98,9 @@ placebo test). A diagnostic with neither is not acceptable. See
 ## Roadmap and scope
 
 Shipped so far: classical `Synth` (v0.1), ridge-augmented `AugSynth` with
-LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3), robustness checks —
-in-space placebo and donor leave-one-out (v0.6) — each with unit + R-parity
-tests and a clean-room audit in `docs/`.
+LOO-CV (v0.2), conformal inference per CWZ 2021 (v0.3), power analysis / MDE
+(v0.4), and robustness checks — in-space placebo and donor leave-one-out —
+(v0.6), each with unit + R-parity tests and a clean-room audit in `docs/`.
 
 Critical path toward end-to-end geo-experiments (the project's reason to
 exist), in order:
@@ -106,11 +108,12 @@ exist), in order:
 1. **v0.4 — power analysis / MDE** (`augsynth_py.power`): effect injection +
    refit + detection rate via conformal inference; parallel grid with joblib.
    Parity oracle: `GeoLiftPower`. **Lands in this package** — see the package
-   boundary below.
+   boundary below. **Done (v0.4.0, 2026-08-26).**
 2. **v0.5 — market selection**: candidate ranking over treatment sets ×
    durations, `GeoLiftMarketSelection` analogue. Completes the single-cell
    GeoLift flow. **Lands in the sibling package**, not here.
-3. **v0.6+ — multi-cell experiments** (sibling package); then, if demand
+   **Done (geoexp 0.1.0, 2026-09-20).**
+3. **Next — multi-cell experiments** (sibling package); then, if demand
    appears, auxiliary covariates $X_i$ and GSC (Xu 2017, incl. BFR 2021 §4
    augmentation) here.
 

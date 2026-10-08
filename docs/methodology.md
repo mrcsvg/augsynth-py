@@ -874,7 +874,13 @@ reports the ATT of every refit, its difference to the full ATT
 the envelope $(\min, \max)$ over refits, whether the sign survives, and the
 donor whose removal moves the ATT most (`most_influential`; ties go to the
 first dropped donor in order, and refits with a non-finite ATT are excluded
-from both the envelope and the choice). The last item is the point: a
+from both the envelope and the choice). The `rmspe_pre` column of the
+leave-one-out frame is the estimator's *normalized* `rmspe_pre_` (a
+fit-quality diagnostic comparable to `fit.rmspe_pre_`), whereas the
+`rmspe_pre` of the placebo `ratios` frame (§7.1) is *raw* on the outcome
+scale, because the ratio statistic, the discard rule and `SCtools` operate
+on that scale; the two columns share a name but not a unit. The last item
+is the point: a
 "range" reported without attribution hides a contaminated donor — in the
 NR-35 application the less-negative end of the leave-one-out range *was* a
 single donor carrying the Brumadinho dam failure (2019), which only became

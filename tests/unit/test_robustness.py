@@ -132,7 +132,7 @@ def test_loo_donor_selection_modes(panel: pl.DataFrame) -> None:
     assert leave_one_out(fit, donors=["u3", "u3"]).att.height == 1
     with pytest.raises(ValueError, match="not donors"):
         leave_one_out(fit, donors=["u3", "nope"])
-    with pytest.raises(ValueError, match="donors"):
+    with pytest.raises(ValueError, match=r"pass a list, e\.g\. donors=\['some'\]"):
         leave_one_out(fit, donors="some")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="at least one"):
         leave_one_out(fit, donors=[])
@@ -586,3 +586,23 @@ def test_robustness_names_are_package_exports() -> None:
     for name in ("placebo_in_space", "leave_one_out", "PlaceboInSpaceResult", "LeaveOneOutResult"):
         assert name in augsynth_py.__all__
         assert hasattr(augsynth_py, name)
+
+
+def test_result_types_compare_by_identity(panel: pl.DataFrame) -> None:
+    """Frozen dataclasses holding DataFrames: ``eq=False`` like ConformalTestResult.
+
+    With the default ``eq=True`` the generated ``__eq__`` compares the frame
+    fields, which raises TypeError (polars refuses an ambiguous truth value),
+    and the frozen+eq combination also makes instances unhashable in practice.
+    """
+    from augsynth_py.robustness import leave_one_out, placebo_in_space
+
+    fit = fit_synth(panel, fixedeff=False)
+    ps_a, ps_b = placebo_in_space(fit), placebo_in_space(fit)
+    loo_a, loo_b = leave_one_out(fit), leave_one_out(fit)
+
+    for a, b in ((ps_a, ps_b), (loo_a, loo_b)):
+        assert a == a
+        assert a != b  # same inputs, different objects: identity, not value
+        assert hash(a) != hash(b) or a is b
+        assert len({a, b}) == 2

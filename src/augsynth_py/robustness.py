@@ -134,7 +134,7 @@ _REQUIRED_ATTRS: tuple[str, ...] = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class LeaveOneOutResult:
     """Output of :func:`leave_one_out`.
 
@@ -150,7 +150,11 @@ class LeaveOneOutResult:
         - ``att`` (f64): ATT of the refit without it; null on error.
         - ``delta_att`` (f64): ``att - att_full``; null on error.
         - ``rmspe_pre`` (f64): normalized pre-period RMSPE of the refit, same
-          definition as the estimator's ``rmspe_pre_``; null on error.
+          definition as the estimator's ``rmspe_pre_``, so it is comparable
+          to ``fit.rmspe_pre_`` as a fit-quality diagnostic. Not the same
+          quantity as ``PlaceboInSpaceResult.ratios["rmspe_pre"]``, which is
+          raw on the outcome scale because the ratio statistic, the discard
+          rule and ``SCtools`` operate on that scale. Null on error.
         - ``lambda_`` (f64): ridge penalty the refit used (AugSynth); null
           for estimators without one, or on error.
         - ``error`` (str): ``"ExcType: message"`` under
@@ -183,7 +187,7 @@ class LeaveOneOutResult:
     lambda_at_boundary: tuple[str, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PlaceboInSpaceResult:
     """Output of :func:`placebo_in_space`.
 
@@ -203,7 +207,11 @@ class PlaceboInSpaceResult:
 
         - ``unit`` (str), ``is_treated`` (bool).
         - ``rmspe_pre`` / ``rmspe_post`` (f64): raw RMSPE on the outcome
-          scale over the pre / post periods; null on error.
+          scale over the pre / post periods, because the ratio statistic,
+          the discard rule and ``SCtools::mspe.test`` operate on that scale.
+          Not the same quantity as ``LeaveOneOutResult.att["rmspe_pre"]`` or
+          the estimator's ``rmspe_pre_``, which are normalized. Null on
+          error.
         - ``ratio`` (f64): ``rmspe_post / rmspe_pre`` (``inf`` for a perfect
           pre-fit with post error, ``nan`` for 0/0); null on error.
         - ``rank`` (i64): 1 for the largest ratio among kept units, ties share
@@ -458,7 +466,11 @@ def leave_one_out(
     from several threads, can misattribute or drop warnings; attribution is
     guaranteed only under the default process backend. joblib does not nest
     workers: a call made from inside a worker runs its refits sequentially,
-    so parallelize at the caller level or here, not both.
+    so parallelize at the caller level or here, not both. The aggregated
+    λ-at-grid-boundary summary (and any other re-emitted refit warning)
+    carries its own message text, so a ``warnings.filterwarnings`` entry
+    matching the original per-fit text does not silence it; filter on the
+    summary text or read ``lambda_at_boundary`` on the result instead.
     """
     _check_refittable(fit)
     record = _check_on_error(on_error)
@@ -478,7 +490,8 @@ def leave_one_out(
             selected = list(all_donors)
         else:
             raise ValueError(
-                f"donors must be 'nonzero', 'all' or a sequence of donor labels; got {donors!r}."
+                f"donors must be 'nonzero', 'all' or a sequence of donor labels; got {donors!r}. "
+                f"To drop a single donor pass a list, e.g. donors=[{donors!r}]."
             )
     else:
         selected = list(dict.fromkeys(str(d) for d in donors))  # dedupe, keep order
@@ -639,6 +652,12 @@ def placebo_in_space(
     the placebo pools (ADH 2010 practice, done here) breaks that symmetry
     slightly. The hypothesis is one about the design, not about sampling —
     see ``docs/methodology.md`` §7.
+
+    Warnings from the placebo refits are aggregated as in
+    :func:`leave_one_out`: the λ-at-grid-boundary summary (and any other
+    re-emitted refit warning) carries its own message text, so a filter on
+    the original per-fit text does not silence it; filter on the summary
+    text or read ``lambda_at_boundary`` on the result instead.
     """
     _check_refittable(fit)
     record = _check_on_error(on_error)

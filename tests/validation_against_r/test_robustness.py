@@ -101,7 +101,7 @@ def test_loo_refits_match_r_augsynth_by_composition(
         row = loo.att.filter(pl.col("dropped_unit") == d).row(0, named=True)
         # README tolerance for ATT estimates (atol=1e-4, rtol=1e-4). The two
         # solvers differ at about 1e-6 relative on the path (3.3e-3 absolute on
-        # values in the thousands), which propagates to ~3e-4 absolute on an
+        # values in the thousands), which propagates to 2.6e-4 absolute on an
         # ATT of ~-104 (e.g. without baton rouge); an absolute-only 1e-4 would
         # sit at that noise floor even for the full fit (plan decision #12).
         assert row["att"] == pytest.approx(r_att, abs=1e-4, rel=1e-4)
