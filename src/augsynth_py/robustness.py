@@ -632,10 +632,13 @@ def placebo_in_space(
     Notes
     -----
     The p-value is a rank statistic with a floor of ``1 / (J_kept + 1)``:
-    with 9 donors the smallest attainable value is 0.1. It is an exact
-    permutation-style quantity under the hypothesis that treatment was
-    assigned at random among the units, and is reported as such — see
-    ``docs/methodology.md`` §7.
+    with 9 donors the smallest attainable value is 0.1. It has the form of
+    a permutation p-value (Abadie 2021 §5); it would be exact under random
+    assignment of the treated label only if every unit's synthetic control
+    were built from the same pool, and excluding the real treated unit from
+    the placebo pools (ADH 2010 practice, done here) breaks that symmetry
+    slightly. The hypothesis is one about the design, not about sampling —
+    see ``docs/methodology.md`` §7.
     """
     _check_refittable(fit)
     record = _check_on_error(on_error)

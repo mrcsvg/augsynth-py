@@ -826,8 +826,12 @@ $$
 
 so $p \ge 1/(J+1)$ and the treated unit's own ratio always contributes one
 to the numerator. This matches `SCtools::mspe.test` (`sum(ratios >=
-treated) / nrow`). It is an exact test under random assignment of treatment
-among the $J+1$ units — a design hypothesis, not a sampling one — and is
+treated) / nrow`). The p-value has the form of a permutation p-value
+(Abadie 2021 §5). It would be exact under random assignment of the treated
+label only if every unit's synthetic control were built from the same pool;
+excluding the real treated unit from the placebo pools (ADH 2010 practice,
+what `placebo_in_space` does) breaks that symmetry slightly. Either way the
+hypothesis is one about the design, not about sampling, and the p-value is
 reported as such.
 
 **Undefined and infinite ratios.** A perfect pre-period fit gives
@@ -884,8 +888,10 @@ so the solver's choice among equivalent weights does not matter.
 
 ### 7.3 Warnings and errors
 
-Refits run in `joblib` workers, which cannot surface warnings to the caller.
-Each refit records its warnings; the module then emits **one** summary per
+Refits may run in `joblib` worker processes (`n_jobs > 1`), which cannot
+surface warnings to the caller; with the default `n_jobs=1` they run
+in-process. Warnings are captured and aggregated either way: each refit
+records its warnings; the module then emits **one** summary per
 call for `AugSynth`'s "λ at the grid boundary" diagnostic (naming the
 affected refits, also stored on the result as `lambda_at_boundary`) and
 re-emits any other warning text once. `on_error="record"` keeps failed refits
@@ -893,8 +899,10 @@ as rows with an `error` column and excludes them from ranks and p-values —
 errored placebos leave the denominator of $p$, an extension `SCtools` has no
 counterpart for; `"raise"` (default) propagates the first failure. When no
 placebo survives the discard rule, refit errors and undefined ratios, the
-comparison set is the treated unit alone, $p = 1$ as in `SCtools`, and a
-warning says the p-value is uninformative. The `lambda_` column on both
+comparison set is the treated unit alone, $p = 1$ follows from the same
+formula, and a warning says the p-value is uninformative. This case has no
+`SCtools` counterpart: `mspe.test` cannot run with zero placebos (its
+`for (i in 1:n)` with `n = 0` indexes missing columns). The `lambda_` column on both
 result frames makes the penalty policy observable per refit.
 
 ### 7.4 Validation
@@ -952,7 +960,8 @@ three layers:
      diverges on one placebo (`infinite or missing values in 'x'` from its
      iterate-norm `svd`); it converges at 3 and 4 and fails at 5, 6 and 7.
      Precision is the only ipop knob `generate.placebos` exposes.
-   - `generate.placebos` runs the 40 nested-$V$ fits in about 80–120 s.
+   - `generate.placebos` runs the 39 placebo fits (plus the treated fit),
+     each with nested $V$ optimisation, in about 80–120 s.
 
    | quantity | value |
    |---|---|

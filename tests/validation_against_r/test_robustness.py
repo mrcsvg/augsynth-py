@@ -216,6 +216,7 @@ def test_placebo_aggregation_matches_sctools_mspe_test_exactly(
     assert set(ps.discarded) == set(placebos) - set(r_units)
 
 
+@pytest.mark.slow
 @pytest.mark.requires_r_pkg("SCtools", "Synth", "GeoLift")
 def test_characterize_against_real_sctools_placebos(
     r_session: Any, r_geolift_pretest: pl.DataFrame, ny_fit: Any
@@ -231,7 +232,9 @@ def test_characterize_against_real_sctools_placebos(
     well, for the record). Two harness details, both explained inline in
     the R code: ``controls.identifier`` must be sorted or SCtools labels
     every placebo with another unit's name, and ``Sigf.ipop = 4`` because
-    ipop at Synth's default 5 diverges on one placebo.
+    ipop at Synth's default 5 diverges on one placebo. Expect 80-120 s of
+    wall time: 39 placebo fits plus the treated fit, each with nested V
+    optimisation.
     """
     from scipy.stats import spearmanr
 
@@ -253,12 +256,12 @@ def test_characterize_against_real_sctools_placebos(
         # another unit's name (the ratios themselves are right). Sorting makes
         # the two orders coincide.
         ctrl <- sort(setdiff(unique(df$id), tr))
-        pre <- 1:45
-        sp <- lapply(pre, function(k) list('Y', k, 'mean'))
+        pre_idx <- 1:45
+        sp <- lapply(pre_idx, function(k) list('Y', k, 'mean'))
         dp <- dataprep(foo = df, predictors = NULL, special.predictors = sp,
                        dependent = 'Y', unit.variable = 'id', time.variable = 't',
                        treatment.identifier = tr, controls.identifier = ctrl,
-                       time.predictors.prior = pre, time.optimize.ssr = pre,
+                       time.predictors.prior = pre_idx, time.optimize.ssr = pre_idx,
                        unit.names.variable = 'location', time.plot = 1:90)
         # Sigf.ipop = 4, not Synth's default 5: with 45 single-period
         # predictors on 38 donors the inner QP's H = X0' V X0 has rcond ~5e-8
@@ -267,7 +270,8 @@ def test_characterize_against_real_sctools_placebos(
         # svd); 3 and 4 converge, 5-7 do not. The same precision is used for
         # the treated fit so the two sides of the ratio are comparable.
         so <- synth(dp, Sigf.ipop = 4)
-        tdf_real <- generate.placebos(dp, so, Sigf.ipop = 4)
+        # suppressMessages: tibble name-repair chatter (messages, not warnings).
+        tdf_real <- suppressMessages(generate.placebos(dp, so, Sigf.ipop = 4))
         res_real <- mspe.test(tdf_real)
         """
     )
@@ -280,6 +284,7 @@ def test_characterize_against_real_sctools_placebos(
         )
     }
     r_p = float(r_session("res_real$p.val")[0])
+    r_session("rm(df, dp, so, tdf_real, res_real, sp, ctrl, tr, pre_idx)")
 
     def _ratios(fit: Any) -> tuple[dict[str, float], Any]:
         ps = placebo_in_space(fit)
@@ -303,7 +308,7 @@ def test_characterize_against_real_sctools_placebos(
     rel_gap = float(np.median([abs(ours[u] - r_test[u]) / r_test[u] for u in ours]))
     rho_fe = _rho(_ratios(ny_fit)[0])
     print(
-        f"\n[layer 3] spearman rho={rho:.4f}  median |rel gap| in MSPE ratio={rel_gap:.4f}  "
+        f"\n[layer 3] spearman rho={rho:.4f}  median |rel gap| in MSPE ratio={rel_gap:.4g}  "
         f"p(ours)={ps.pvalue:.4f}  p(SCtools/ipop)={r_p:.4f}  "
         f"[rho with fixedeff=True: {rho_fe:.4f}]"
     )
