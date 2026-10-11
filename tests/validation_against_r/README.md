@@ -13,7 +13,12 @@ bug, full stop.
 Running these tests requires:
 
 - R >= 4.0
-- The R packages `augsynth`, `Synth`, and (for some tests) `GeoLift`.
+- The R packages `augsynth`, `Synth`, `SCtools`, and (for some tests) `GeoLift`.
+  `SCtools` is the oracle for the placebo-test aggregation (`mspe.test`);
+  the refits themselves are validated against `augsynth`. `cvTools` is
+  pulled in as a dependency of `SCtools` and is also called directly by the
+  robustness harness (`cvTools::mspe`, to recompute the pre-period MSPE
+  denominators on the R side); no separate install step is needed.
 - The Python optional dependency group `validation` (which installs `rpy2`).
 
 Most contributors will not have all of this set up locally. Keeping the
@@ -28,8 +33,9 @@ environment and runs in its own CI job.
 pip install -e ".[validation,dev]"
 
 # Install R dependencies (one-time)
-Rscript -e 'install.packages(c("remotes", "Synth"))'
+Rscript -e 'install.packages(c("remotes", "Synth", "SCtools"))'
 Rscript -e 'remotes::install_github("ebenmichael/augsynth")'
+Rscript -e 'remotes::install_github("facebookincubator/GeoLift")'
 
 # Run only the parity suite
 pytest tests/validation_against_r/ -v

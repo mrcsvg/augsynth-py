@@ -26,6 +26,18 @@ California's Tobacco Control Program.* Journal of the American Statistical Assoc
 - DOI publicado: https://doi.org/10.1198/jasa.2009.ap08746
 - Alternativa: NBER WP 12831 — https://www.nber.org/system/files/working_papers/w12831/w12831.pdf
 
+## Abadie, Diamond & Hainmueller (2015)
+
+*Comparative Politics and the Synthetic Control Method.* American Journal of
+Political Science, 59(2), 495–510.
+
+- DOI publicado: https://doi.org/10.1111/ajps.12116
+- Sem cópia open-access verificada: a URL da página pessoal de J. Hainmueller
+  (`web.stanford.edu/~jhain/Paper/AJPS2015a.pdf`) redirecionava para um 404 em
+  2026-10-08. Use o DOI.
+- Usado em: `augsynth_py.robustness.leave_one_out` (§4.4, leave-one-out) —
+  ver `docs/methodology.md` §7.2.
+
 ## Abadie (2021)
 
 *Using Synthetic Controls: Feasibility, Data Requirements, and Methodological Aspects.*

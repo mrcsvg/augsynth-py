@@ -1,9 +1,11 @@
 """Internal panel reshaping and pre-period demeaning helpers.
 
 These are not part of the public API. They are shared by every estimator that
-needs to lift a long panel into a ``(T, N)`` outcome matrix with stable column
-ordering — currently :class:`augsynth_py.synth.classical.Synth`, soon also the
-augmented variant.
+lifts a long panel into a ``(T, N)`` outcome matrix with stable column ordering
+(:class:`augsynth_py.synth.classical.Synth`,
+:class:`augsynth_py.synth.augmented.AugSynth`), and by the refit-based
+diagnostics in :mod:`augsynth_py.robustness`, which need the inverse reshape
+(:func:`wide_to_long`) to rebuild the panel a fitted estimator saw.
 """
 
 from __future__ import annotations
@@ -138,6 +140,85 @@ def long_to_wide(
     treated_idx = 0
 
     return y_matrix, ordered_units, periods, treated_idx
+
+
+def wide_to_long(
+    y_matrix: NDArray[np.float64],
+    units: list[str],
+    periods: NDArray[Any],
+    *,
+    unit: str = "unit",
+    time: str = "time",
+    outcome: str = "outcome",
+) -> pl.DataFrame:
+    """Reshape a ``(T, N)`` outcome matrix back into a long panel.
+
+    Inverse of :func:`long_to_wide` up to column naming: feeding the result
+    back through ``long_to_wide(..., treated=units[treated_idx])`` returns the
+    same matrix, unit list and period array. Used by the refit-based
+    diagnostics in :mod:`augsynth_py.robustness`, which rebuild the panel a
+    fitted estimator saw and refit it with a unit removed or re-labelled.
+
+    Parameters
+    ----------
+    y_matrix
+        ``(T, N)`` outcome matrix, periods in rows, units in columns.
+    units
+        Length-``N`` unit labels in column order. A collapsed treated-group
+        label (``"a,b"``) is an ordinary unit here.
+    periods
+        Length-``T`` array of period values in row order. Its dtype is
+        preserved via :func:`periods_to_series` — ``Date``, ``Datetime`` at
+        any resolution, int and str all come back as the dtype
+        ``long_to_wide`` saw. Time-zone information is not recoverable from
+        ``periods`` (``long_to_wide``'s ``to_numpy()`` already drops it), so a
+        tz-aware ``Datetime`` comes back naive.
+    unit, time, outcome
+        Column names of the returned frame.
+
+    Returns
+    -------
+    pl.DataFrame
+        ``T * N`` rows, columns ``[unit, time, outcome]``, unit-major order.
+
+    Raises
+    ------
+    ValueError
+        If ``y_matrix`` is not 2-D or its shape disagrees with ``units`` /
+        ``periods``.
+    """
+    y = np.asarray(y_matrix, dtype=np.float64)
+    if y.ndim != 2:
+        raise ValueError(f"y_matrix must be 2-D (T, N); got shape {y.shape}.")
+    n_periods, n_units = y.shape
+    if len(units) != n_units:
+        raise ValueError(f"Got {len(units)} units for a matrix with {n_units} columns.")
+    if len(periods) != n_periods:
+        raise ValueError(f"Got {len(periods)} periods for a matrix with {n_periods} rows.")
+
+    period_series = periods_to_series(periods, time).gather(np.tile(np.arange(n_periods), n_units))
+    return pl.DataFrame(
+        {
+            unit: [str(u) for u in units for _ in range(n_periods)],
+            time: period_series,
+            outcome: y.T.reshape(-1),
+        }
+    )
+
+
+def periods_to_series(periods: NDArray[Any], name: str) -> pl.Series:
+    """Turn a ``periods`` array from :func:`long_to_wide` back into a polars Series.
+
+    Polars infers the dtype from the numpy dtype directly (``datetime64[ns]``
+    stays ``Datetime("ns")``, ``datetime64[D]`` becomes ``Date``, ints stay
+    ints). Only object arrays — strings, Python ``date`` objects — go through
+    ``.tolist()`` so polars infers from the Python values instead of producing
+    an ``Object`` column. ``np.asarray(periods).tolist()`` alone is wrong:
+    numpy turns ``datetime64[ns]`` into epoch integers because
+    ``datetime.datetime`` has no nanoseconds.
+    """
+    p = np.asarray(periods)
+    return pl.Series(name, p.tolist() if p.dtype == object else p)
 
 
 def imbalance(

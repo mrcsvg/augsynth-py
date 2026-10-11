@@ -8,8 +8,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-08
+
+The v0.6 milestone: refit-based robustness checks on a fitted estimator
+(`augsynth_py.robustness`), plus two conformal-inference changes that landed
+on `main` while it was being built: the post-dominated-window diagnostic and
+the strict `p > alpha` acceptance rule in `conformal_interval` (#29), a
+deliberate divergence from R `augsynth` and a behaviour change where
+`p == alpha` is attainable. Existing estimator results are unchanged; the R
+parity suite gains a third oracle, `SCtools` (with `Synth`, which it
+consumes).
+
 ### Added
 
+- **`augsynth_py.robustness`** — refit-based robustness checks on a fitted
+  `Synth` / `AugSynth`, the v0.6 milestone:
+  - `placebo_in_space(fit, *, mspe_limit=None, n_jobs=1, on_error="raise")`:
+    in-space placebo test (ADH 2010 §III.B). Reassigns treatment to each
+    donor with the real treated unit out of the pool, refits, and ranks the
+    treated unit's post/pre RMSPE ratio among the placebos. The p-value
+    counts the treated unit in the denominator (Abadie 2021 §5; equal to
+    `SCtools::mspe.test`), so its floor is `1/(J+1)`. It has the form of a
+    permutation p-value, not an exact test: excluding the real treated unit
+    from the placebo pools means the units are not strictly exchangeable
+    (`docs/methodology.md` §7.1). Optional ADH/SCtools pre-MSPE discard rule
+    (`mspe_limit`), off by default; the treated row is never discarded.
+    Undefined ratios are handled explicitly: a perfect pre-fit gives `inf`
+    and ranks first, a `0/0` placebo is excluded from rank and p-value, a
+    `0/0` treated statistic gives `pvalue = nan` with a warning, and when no
+    placebo survives the discard rule / refit errors the p-value is 1 with a
+    warning that it is uninformative. Returns `PlaceboInSpaceResult` with the
+    per-unit `ratios` frame (ratio, rank, discarded flag, `lambda_`,
+    `error`) and the long `gaps` frame for the spaghetti plot.
+  - `leave_one_out(fit, *, donors="nonzero", tol=1e-6, n_jobs=1, on_error="raise")`:
+    drops each contributing donor in turn and refits (ADH 2015 §4.4; Abadie
+    2021 §6). "Contributing" is `|w| > tol`, negative `AugSynth` weights
+    included; the `1e-6` default exists because Clarabel leaves ~1e-7 on
+    weights that are zero in exact arithmetic. Returns `LeaveOneOutResult`
+    with `att_full`, the per-donor `att` frame (ATT, delta to the full fit,
+    weight, `lambda_`, `error`), the `att_range` envelope, `sign_stable`,
+    the counterfactual `paths`, and `most_influential` — the donor whose
+    removal moves the ATT most, so a contaminated donor is named rather than
+    averaged into a range.
+  - Both refit a `copy.deepcopy` of the fitted estimator, so its
+    configuration carries over: a CV-selected `AugSynth` penalty is
+    re-selected in every refit; `AugSynth(lambda_=x)` keeps `x`. Donors are
+    reported by the string labels in `fit.units_`; the period column of
+    `gaps` / `paths` keeps the user's time dtype. `joblib` parallelism via
+    `n_jobs`; `on_error="record"` keeps failed refits as rows with an
+    `error` column. `AugSynth`'s λ-at-grid-edge warning is aggregated into
+    one summary per call and listed on the result as `lambda_at_boundary`.
+  - Validation in three layers (`docs/methodology.md` §7.4): refits by
+    composition against R `augsynth` on the same modified panel (paths and
+    ATT at the documented `1e-4` tolerances); aggregation **exact** against
+    `SCtools::mspe.test` fed with our fitted series, with R recomputing the
+    pre-MSPE denominators from the series before the test runs (ratios
+    within 6.3e-16 relative, p-values equal, with and without the discard
+    rule); and a characterization run against genuine `Synth`/ipop placebos
+    via `SCtools::generate.placebos` (`Synth(fixedeff=False)`, Spearman
+    ρ = 0.97, marked `slow`), recorded, not asserted beyond ρ > 0.9.
+    `leave_one_out` has no external oracle beyond composition. Clean-room
+    audit in `docs/clean-room-audit-2026-10-08-robustness.md`; the claim is
+    qualified — two `SCtools` source files were read to build the oracle
+    harness, not translated.
+- `augsynth_py.synth._panel.wide_to_long` (internal): inverse of
+  `long_to_wide`, used to rebuild the panel a fitted estimator saw; and
+  `periods_to_series`, which keeps the period dtype (`Datetime("ns")` no
+  longer degrades to epoch integers) on the way back.
 - Conformal inference now warns (`UserWarning`) on a **post-dominated
   window** — `n_post >= n_pre` with `fixedeff=True`. In that regime the CWZ
   full-window refit re-centres the treated unit on its full-window mean,
@@ -54,8 +119,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an unbounded interval is corrected to `T < 1/alpha` (`inference.py`,
   `methodology.md` §5.3), and the 2026-07-07 inference audit gets a dated
   note correcting its quotation of CWZ.
-- `docs/methodology.md` gains §5.6 for the above; the former §5.6 and §5.7
-  shift to §5.7 and §5.8.
+- `docs/methodology.md` gains §7 (robustness checks): the equation-level
+  mapping of both diagnostics, the undefined-ratio and discard conventions,
+  the warning/error policy, and the three-layer validation design.
+- `SCtools` (and `Synth`, which it consumes) joins the R validation job
+  (`.github/workflows/validation.yml`) as the oracle for the placebo
+  aggregation; `augsynth` remains the oracle for every refit.
+- `PlaceboInSpaceResult` and `LeaveOneOutResult` are declared
+  `@dataclass(frozen=True, eq=False)`, like `ConformalTestResult`: they hold
+  DataFrames, so the generated value `__eq__` raised `TypeError`; instances
+  now compare by identity and are hashable.
+- `docs/methodology.md` gains §5.6 for the post-dominated warning; the former
+  §5.6 and §5.7 shift to §5.7 and §5.8.
 - `tests/validation_against_r/test_conformal.py` silences the new warning at
   module level: the canonical `GeoLift_PreTest` window (90 days split at
   2021-02-15) is exactly 45 pre / 45 post, so every `fixedeff=True` fit on it
@@ -290,7 +365,8 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.
 
-[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.6.0
 [0.5.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.3.1
