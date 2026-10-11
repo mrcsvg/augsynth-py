@@ -11,9 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.0] - 2026-10-08
 
 The v0.6 milestone: refit-based robustness checks on a fitted estimator
-(`augsynth_py.robustness`), plus the post-dominated-window diagnostic for
-conformal inference. Existing estimator results are unchanged; the R parity
-suite gains a third oracle, `SCtools` (with `Synth`, which it consumes).
+(`augsynth_py.robustness`), plus two conformal-inference changes that landed
+on `main` while it was being built: the post-dominated-window diagnostic and
+the strict `p > alpha` acceptance rule in `conformal_interval` (#29), a
+deliberate divergence from R `augsynth` and a behaviour change where
+`p == alpha` is attainable. Existing estimator results are unchanged; the R
+parity suite gains a third oracle, `SCtools` (with `Synth`, which it
+consumes).
 
 ### Added
 
@@ -96,6 +100,25 @@ suite gains a third oracle, `SCtools` (with `Synth`, which it consumes).
 
 ### Changed
 
+- **Behaviour change** (#29): `conformal_interval` now accepts `h0` iff
+  `p(h0) > alpha`, not `>= alpha`. This is the set CWZ 2021 define
+  (Algorithm 1) and prove coverage for, and it is exactly the acceptance
+  region of the `p <= alpha` test that `simulate_power` counts as a
+  detection. Before this change the two entry points could give opposite
+  answers on the same fit, same data and same `alpha`. Output changes only
+  where `p == alpha` is attainable: under the block scheme, when `alpha * T`
+  is an integer (`T` in {20, 40, 60, ...} at `alpha = 0.05`; the
+  `GeoLift_PreTest` fixture at `alpha = 0.10`). There the interval loses
+  one grid step per side that sat on `p == alpha`, and its coverage moves
+  from an undeclared `1 - alpha + 1/T` to the nominal `1 - alpha` (95%
+  instead of 97.5% at `T = 40`). At `T == 1/alpha` the region is no longer
+  unbounded for every dataset. This **deliberately diverges from R
+  `augsynth`**, whose `compute_permute_ci` accepts `p >= alpha` (BFR 2021,
+  Appendix A); the divergence is pinned by a new parity test. No API change;
+  the power contract is untouched. The docs claim that `T <= 1/alpha` forces
+  an unbounded interval is corrected to `T < 1/alpha` (`inference.py`,
+  `methodology.md` §5.3), and the 2026-07-07 inference audit gets a dated
+  note correcting its quotation of CWZ.
 - `docs/methodology.md` gains §7 (robustness checks): the equation-level
   mapping of both diagnostics, the undefined-ratio and discard conventions,
   the warning/error policy, and the three-layer validation design.
@@ -120,6 +143,29 @@ suite gains a third oracle, `SCtools` (with `Synth`, which it consumes).
   mechanism is driven by `T` and the post-period ramp, not by the split (the
   acceptance region is empty at either), and the pre-dominated split keeps it
   out of the regime the new warning flags.
+
+### Fixed
+
+- `adjust_pvalues` no longer pushes a mathematically tied adjusted p-value
+  past `alpha` (issue #29, scenario S4b). Raw conformal p-values are exact
+  rationals (`k/T` under the block scheme), and `k/T == alpha` holds in float
+  whenever it holds as a rational; the old floating-point adjustment broke
+  that. Benjamini-Hochberg rounded `m/j` before multiplying, so e.g.
+  `p = 1/83` at rank 20 of `m = 83` came out `0.05000000000000001` and
+  silently failed the `p <= alpha` rule — 1,389 such cases at
+  `alpha in {0.05, 0.10}` for `T <= 1000`, `m <= 200`. Bonferroni/Holm
+  products such as `7 * (1/140)` landed an ulp *below* the tie
+  (`0.049999999999999996`; the issue's report that they land above does not
+  reproduce, and no Bonferroni/Holm case lands above at those alphas), which
+  is harmless for `<= alpha` but not exact. The adjustment now reads each
+  input as the smallest-denominator rational (denominator up to `10**6`)
+  that rounds back to it, computes in exact `fractions.Fraction`
+  arithmetic, and rounds once, so a tied adjusted value is `== alpha`.
+  Inputs with no small-denominator rational behind them are used at their
+  exact binary value. No API change; results differ from R's `p.adjust`
+  (plain floating point, and it shows the same BH artefact) by at most a few
+  ulps. New R parity test `tests/validation_against_r/test_adjust_pvalues.py`
+  — `adjust_pvalues` had none — asserts agreement to `rtol=1e-14`.
 
 ## [0.5.0] - 2026-08-30
 

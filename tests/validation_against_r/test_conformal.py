@@ -33,12 +33,18 @@ Convention pinned (decision log)
 
 Aggregate CI note
 -----------------
-R does **not** expose an aggregate/average-effect conformal CI: in
+R's public output exposes no aggregate/average-effect conformal CI: in
 ``conformal_inf`` the average row's ``lb``/``ub`` are ``NA`` (only per-period
-CIs, built from a different per-period null, are populated). There is therefore
-no R oracle for our aggregate ``conformal_interval``. It is validated
-transitively: the interval is the test-inversion acceptance region of the same
+CIs, built from a different per-period null, are populated), and its grid
+differs from ours, so reported bounds are not compared. The interval is
+validated transitively: it is the test-inversion acceptance region of the same
 ``conformal_pvalue`` that is asserted exact against R here at several ``h0``.
+
+The inversion *rule* is checked separately against R's internal
+``compute_permute_ci`` on a shared grid (black-box call, like
+``compute_permute_pval`` above). R accepts ``p >= alpha``; we accept
+``p > alpha`` per CWZ 2021 Algorithm 1 — a deliberate divergence (issue #29,
+``docs/methodology.md`` §5.3) that only shows at attainable ``alpha = k/T``.
 """
 
 from __future__ import annotations
@@ -446,3 +452,56 @@ def test_basque_pvalue_curve_matches_r_exact(
     # between distinct shift statistics on this fixture dwarfs solver noise, so
     # the counts are identical and agreement is float-exact.
     assert py_p == pytest.approx(r_p, abs=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Boundary convention of the interval inversion (issue #29).
+#    R's compute_permute_ci accepts p >= alpha (BFR 2021 App. A); we accept
+#    p > alpha (CWZ 2021 Algorithm 1). Pin both facts on a shared grid so the
+#    divergence is documented and any change on either side is caught.
+# ---------------------------------------------------------------------------
+
+
+def test_r_interval_inversion_uses_non_strict_boundary(r_conformal_env: Any) -> None:
+    """R's ``compute_permute_ci`` returns the ``p >= alpha`` envelope.
+
+    On a shared grid, R's own p-values are thresholded both ways at every
+    attainable ``alpha = k/T``; wherever the two rules select different grid
+    points, R's interval equals the non-strict envelope. Our
+    :func:`conformal_interval` uses the strict rule (pinned by
+    ``test_pvalue_equal_to_alpha_is_rejected`` and
+    ``test_interval_agrees_with_test_at_alpha_times_t_integer`` in
+    ``tests/unit/test_inference_interval.py``), so at those alphas the package
+    is one grid step narrower than R by design. If this test starts failing,
+    R changed its convention and the divergence note in ``methodology.md``
+    §5.3 must be revisited.
+    """
+    grid = np.linspace(-40000.0, 40000.0, 81)
+    r_conformal_env(f"g29 <- c({', '.join(repr(float(h)) for h in grid)})")
+    r_p = np.asarray(
+        r_conformal_env(
+            "sapply(g29, function(h) "
+            "augsynth:::compute_permute_pval(agg, res, h, pl_, 'block', 1, 1000, NULL))"
+        ),
+        dtype=float,
+    )
+    n_periods = int(np.asarray(r_conformal_env("ncol(agg$X)"))[0])
+
+    differing = 0
+    for k in np.unique(np.round(r_p * n_periods).astype(int)):
+        alpha = float(k / n_periods)
+        ge = grid[r_p >= alpha]
+        gt = grid[r_p > alpha]
+        if gt.size == 0 or (ge.min(), ge.max()) == (gt.min(), gt.max()):
+            continue
+        differing += 1
+        r_ci = np.asarray(
+            r_conformal_env(
+                f"augsynth:::compute_permute_ci(agg, res, g29, pl_, {alpha!r}, "
+                "'block', 1, 1000, NULL)"
+            ),
+            dtype=float,
+        )
+        assert (r_ci[0], r_ci[1]) == (ge.min(), ge.max())
+        assert (r_ci[0], r_ci[1]) != (gt.min(), gt.max())
+    assert differing >= 1, "fixture no longer exercises a boundary tie"
