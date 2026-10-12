@@ -67,7 +67,7 @@ them: the post/pre RMSPE ratio and the rank p-value are one-line formulas in
 ADH 2010 §III.B and Abadie 2021 §5, and the discard rule is the ADH 2010
 practice (the 20× / 5× / 2× pre-MSPE cut-offs). The
 in-house prototype that preceded `robustness.py` is the NR-35 notebook
-([`notebooks/_build_nr35.py`](../notebooks/_build_nr35.py), Atos 5 and 7):
+(`notebooks/_build_nr35.py`, Atos 5 and 7; (removed from the repository in October 2026; last tracked at commit `096737a`)):
 a placebo loop with the treated unit removed from the pool and a rank
 p-value, and a leave-one-out loop over the donors, both written from the
 papers before `SCtools` was opened.
@@ -425,12 +425,11 @@ In descending order of value:
    path in 0.5.0 (`_conformal_null_residuals` → `conformal_null_residuals`);
    until then, third-party estimators implement a private-named contract.
    One line once the attributes are promoted.
-3. **Migrate the NR-35 notebook** (`notebooks/_build_nr35.py`, Atos 5 and 7)
-   from its hand-rolled placebo and leave-one-out loops to
-   `placebo_in_space` / `leave_one_out`, and check the notebook's reported
-   p-value and leave-one-out range are reproduced. The prototype should not
-   outlive the library it motivated. Tracked as a follow-up issue after
-   merge.
+3. ~~**Migrate the NR-35 notebook**~~ — superseded. The NR-35 and
+   Jericoacoara notebooks were removed from the repository in October 2026
+   (last tracked at commit `096737a`), so the prototype no longer outlives
+   the library it motivated. If the application is ever revived, rebuild it
+   on `placebo_in_space` / `leave_one_out` directly.
 4. **Report the `Synth`/`SCtools` labelling issue upstream** (decision 15 b):
    `generate.placebos` labels placebo $i$ from `names.and.numbers[i]` while
    indexing `dataprep`'s sorted matrices by position, so an unsorted
