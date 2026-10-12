@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The NR-35 (`04_nr35_trabalho_em_altura`) and Jericoacoara airport
+  (`04_jericoacoara_airport`) case-study notebooks, their builder and fetch
+  scripts, and the AEAT panel CSVs under `notebooks/_data/`. Both were
+  exploratory applications, not part of the package; the NR-35 work that
+  mattered is already in the library (the post-dominated-window warning,
+  `docs/methodology.md` §5.6, and the robustness module it motivated, §7).
+  Last tracked at commit `096737a`. `brazil_states.geojson` stays: the
+  showcase notebook uses it.
+
 ## [0.6.0] - 2026-10-08
 
 The v0.6 milestone: refit-based robustness checks on a fitted estimator

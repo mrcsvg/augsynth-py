@@ -631,8 +631,8 @@ the permuted blocks — which rotate pre-period positions into the scored window
 backwards, and the p-value can rise monotonically with the true effect. **A
 large p-value in this regime is not evidence against a large effect.**
 
-Verified on the NR-35 panel of `notebooks/04_nr35_trabalho_em_altura.ipynb`
-($T_0 = 5$, $T_1 = 7$, 18 donors): injecting reductions of 25 %, 50 %, 75 % and
+Verified on the NR-35 panel of the former `notebooks/04_nr35_trabalho_em_altura.ipynb`
+(removed from the repository in October 2026; last tracked at commit `096737a`) with $T_0 = 5$, $T_1 = 7$, 18 donors: injecting reductions of 25 %, 50 %, 75 % and
 90 % into the treated series moves the block p-value from 0.750 to 0.833, 0.917,
 0.917 and 0.917 — up, not down. The observed residual ratio is 1.400 against a
 predicted $T_1/T_0 = 7/5 = 1.400$. On simulated panels the inversion appears at
@@ -928,7 +928,8 @@ scale, because the ratio statistic, the discard rule and `SCtools` operate
 on that scale; the two columns share a name but not a unit. The last item
 is the point: a
 "range" reported without attribution hides a contaminated donor — in the
-NR-35 application the less-negative end of the leave-one-out range *was* a
+NR-35 application (the former `notebooks/04_nr35_trabalho_em_altura.ipynb`,
+(removed from the repository in October 2026; last tracked at commit `096737a`)) the less-negative end of the leave-one-out range *was* a
 single donor carrying the Brumadinho dam failure (2019), which only became
 visible once that donor was named.
 
