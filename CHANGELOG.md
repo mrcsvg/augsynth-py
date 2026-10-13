@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The R parity suite converts R data.frames to Polars directly
+  (`tests/validation_against_r/_r_frames.py`, adapted from
+  [#22](https://github.com/mrcsvg/augsynth-py/pull/22) by @GuiMarthe) instead
+  of going R -> pandas -> polars. The `validation` extra now installs `rpy2`
+  alone; `pandas` and `pyarrow` are dropped from it. Column schemas seen by
+  the tests are unchanged except that R integers arrive as `Int64` rather
+  than `Int32`. Library code was never affected: `src/` has no pandas.
+
 ### Removed
 
 - The NR-35 (`04_nr35_trabalho_em_altura`) and Jericoacoara airport

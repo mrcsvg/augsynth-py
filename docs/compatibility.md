@@ -98,8 +98,8 @@ The floors are guarded by the `unit-tests-min-deps` job in
 pins in that job with it.
 
 The R parity suite (`tests/validation_against_r/`) is unaffected by this axis:
-it runs in its own workflow with an unconstrained resolution, and `rpy2`,
-`pandas` and `pyarrow` all support numpy 1.x and 2.x alike.
+it runs in its own workflow with an unconstrained resolution, and its only
+extra Python dependency, `rpy2`, supports numpy 1.x and 2.x alike.
 
 ## 5. Adding a dependency, later
 
