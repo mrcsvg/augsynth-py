@@ -169,8 +169,117 @@ exists so the next person reading `Sigf.ipop = 4` and `sort(...)` in the
 harness knows why.
 
 ---
+## I-5 — Conformal inference has no power when the ridge refit interpolates (J ≳ T)
 
-## I-5 — The conformal null refit absorbs the effect under test; no power on rich donor pools with trending outcomes
+**Status:** open, a documented limitation of CWZ 2021 test inversion over a
+ridge-augmented refit — methodological, not a bug. Opened 2026-10-20.
+**Module:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
+— `conformal_pvalue`, `conformal_test`, `conformal_interval`; the same
+mechanism shows up in
+[`src/augsynth_py/robustness.py`](../src/augsynth_py/robustness.py) —
+`placebo_in_space` — through the pre-period RMSPE.
+
+**Observed.** On a municipal CAGED panel (1 treated + 58 donors, 67 pre + 13
+post months, outcome scale ~100) `AugSynth` with the CV-selected `lambda_`:
+
+| Quantity | `AugSynth` | `Synth`, same panel |
+|---|---|---|
+| post-period gap vs. pre-period RMSPE | ~20× | ~20× |
+| `conformal_pvalue(..., permutation_type="block")` | ~0.6, insensitive to `h0` | sensible, rejects |
+| `conformal_interval` | ≈ (−13 000, +13 000) | sensible |
+
+With 187 donors on the same window, `rmspe_pre_` was exactly 0 and the
+`placebo_in_space` ratios were ~1e3–1e6.
+
+**Condition.** The donor pool is as large as the window — roughly $J \ge T$
+(with `fixedeff=True` the unit- and period-demeaned design already spans the
+treated series at $J = T$; without unit demeaning at $J = T + 1$) — or the
+selected `lambda_` is tiny relative to $\mathrm{var}(y)$ with $J$ close to
+$T$. In the motivating fits LOO-CV drove `lambda_` to the auto-grid floor
+$10^{-4}\,\mathrm{var}(y)$, so the existing left-boundary warning from `fit`
+had already fired. The regime is about the *selected penalty* as much as
+about $J$: on the synthetic probe below, `fixedeff=False` on the same panels
+let CV pick a large `lambda_` and nothing degenerated.
+
+**Cause.** CWZ 2021 refits the estimator on **all** $T$ periods under each
+null $h_0$ (`methodology.md` §5.1). The test has power only because a
+synthetic control built from untreated donors cannot reproduce a post-only
+level shift, so $\delta = h_0 - \hat\tau$ must surface in the residuals — at
+least $|\delta|\sqrt{T_0 T_1}/T$ in RMS after the re-centring split of §5.6.
+A ridge refit with $J \ge T$ and a tiny penalty is not bound by this: it
+**interpolates** the $h_0$-adjusted treated series for *every* $h_0$, the
+residuals are $\lambda/\sigma^2$-small solver noise, the permutation test
+ranks noise and returns a data-independent p-value, `conformal_interval`
+accepts the whole grid and the truncation guard returns the search bounds
+($\hat\tau \pm 2^8 \cdot 6\,\mathrm{sd}(\text{post gap})$), and
+`placebo_in_space` divides by a treated pre-RMSPE that is itself ~0. The
+classical simplex fit cannot interpolate ($\omega \ge 0$, $\sum \omega = 1$)
+and is unaffected. Full derivation and the detection rule:
+`methodology.md` §5.9.
+
+**Reproduce.** Synthetic panel with 80 donors on 60 periods (45 pre / 15
+post), outcome ~100, iid noise sd 1 and a true effect of 10 (the DGP of
+[`tests/unit/test_inference_interpolation.py`](../tests/unit/test_inference_interpolation.py)):
+
+```python
+import numpy as np, polars as pl
+from augsynth_py import AugSynth, Synth, conformal_pvalue, conformal_interval
+
+rng = np.random.default_rng(0)
+T, T0, J = 60, 45, 80
+base = 100.0 + 5.0 * np.sin(np.arange(T) / 6.0) + 0.1 * np.arange(T)
+trt = base + rng.normal(0, 1, T)
+trt[T0:] += 10.0
+rows = [{"unit": "trt", "time": t, "y": float(trt[t])} for t in range(T)]
+for j in range(J):
+    d = base + rng.normal(0, 3) + rng.normal(0, 1, T) * rng.uniform(0.5, 2)
+    rows += [{"unit": f"d{j}", "time": t, "y": float(d[t])} for t in range(T)]
+panel = pl.DataFrame(rows)
+kw = dict(unit="unit", time="time", outcome="y", treated="trt", treatment_time=T0)
+
+aug = AugSynth().fit(panel, **kw)  # warns: lambda at the left boundary
+aug.lambda_, aug.rmspe_pre_  # ~1e-3 (= 1e-4 var(y)), ~4e-7
+[conformal_pvalue(aug, h0) for h0 in (0.0, 50.0, 1000.0)]  # ~0.08, 0.05, 0.07 — flat
+conformal_interval(aug, grid_size=21)  # ~(-2700, +2700), truncation warning
+
+syn = Synth().fit(panel, **kw)
+conformal_pvalue(syn, 0.0), conformal_interval(syn, grid_size=21)  # 1/60, ~(9.2, 10.5)
+```
+
+Residual RMS of the refit under $h_0$ relative to the shift $|h_0 - \hat\tau|$
+on this DGP, `fixedeff=True`, 45/15 window (the non-absorbing bound is
+$\sqrt{45 \cdot 15}/60 = 0.43$):
+
+| $J$ | 40 | 55 | 58 | 59 | 60 | 62 | 70 | 80 | 120 |
+|---|---|---|---|---|---|---|---|---|---|
+| ratio | 0.43 | 0.09 | 1e-2 | 3e-3–2e-2 | 7e-4–3e-3 | 4e-4 | 1e-4 | 5e-5 | 1e-5 |
+| `conformal_interval` | bounded | — | truncated | truncated | truncated | truncated | truncated | truncated | truncated |
+
+**Why it matters.** Nothing in the output is wrong — the point estimate is
+fine and the p-value is a valid permutation p-value of a test with no power —
+but a user reading $p \approx 0.6$ as "no effect" or the interval as
+uncertainty is misled, and the symptom is specific to `AugSynth`, so it
+looks like an estimator bug when `Synth` behaves on the same panel.
+
+**What is done (2026-10-20).** `conformal_pvalue` / `conformal_test` emit a
+`UserWarning` when the refit residuals under $h_0$ keep under 5 % of the RMS
+a non-absorbing refit must leave (`_warn_if_null_absorbed`), the
+`conformal_interval` truncation warning names the regime, the
+`conformal_interval` docstring and `methodology.md` §5.9 document it, and
+`test_inference_interpolation.py` pins the warnings on the synthetic
+reproduction. Estimates, p-values and tolerances are unchanged.
+
+**What would close it.** A design-level fix rather than a diagnostic:
+either an estimator-side guard that refuses, or warns on, a ridge
+augmentation with $J \ge T$ at a near-zero penalty (touching `AugSynth.fit`,
+so it needs maintainer sign-off), or a conformal refit that re-selects
+`lambda_` on the full window under each $h_0$ — which would break parity with
+R `augsynth`, whose `compute_permute_test_stats` also refits at the fixed
+penalty and is therefore equally powerless here. Until one of those is
+chosen the entry stays as the documented limitation; the practical remedies
+are to shrink the donor pool well below $T$, fix a larger `lambda_`, or use
+`Synth`.
+## I-6 — The conformal null refit absorbs the effect under test; no power on rich donor pools with trending outcomes
 
 **Status:** open, behaviour confirmed faithful to CWZ 2021 and R `augsynth`.
 Opened 2026-10-20; the test-time diagnostic (item 1 below) landed the same
@@ -208,7 +317,8 @@ testing $h_0 = \delta$ on the unshifted panel (pinned by
 injected effects *is* the §5.5 test-inversion curve, which is known to be
 non-monotone and is R-identical. Full write-up with the decomposition and
 moderators (donor-pool size, stationary vs cumulative outcomes, estimator):
-`methodology.md` §5.9.
+`methodology.md` §5.10; the interpolating limit of channel 3 is I-5 /
+§5.9, whose absorbed-null guard fires on the `AugSynth` rows below.
 
 **Reproduce.**
 
@@ -274,8 +384,9 @@ not cover it; `conformal_test` now does (item 1), `conformal_pvalue` and
 1. *Done 2026-10-20 (maintainer-approved).* `ConformalTestResult.absorbed_share`
    $= 1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$, and
    `conformal_test` emits a `UserWarning` once it reaches 0.75 while the gap
-   exceeds the point fit's pre-period RMSPE (`methodology.md` §5.9,
-   `_warn_if_effect_absorbed`). `conformal_pvalue` is deliberately silent.
+   exceeds the point fit's pre-period RMSPE (`methodology.md` §5.10,
+   `_warn_if_effect_absorbed`); skipped when the I-5 absorbed-null guard
+   already fired on the same call. `conformal_pvalue` is deliberately silent.
 2. Confirm the moderators against R `augsynth` on a trending panel via the
    `workflow_dispatch` parity job (not the stationary `GeoLift_PreTest`
    fixture, which cannot show the effect), so the "faithful" claim rests on

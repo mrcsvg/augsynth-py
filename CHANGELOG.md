@@ -9,8 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-
-- `docs/methodology.md` §5.9 and `docs/known-issues.md` I-5: the conformal
+- A `UserWarning` from `conformal_pvalue` / `conformal_test` (and therefore
+  `conformal_interval`) when the CWZ refit under `h0` absorbs the null
+  instead of testing it: the residuals keep under 5 % of the RMS a synthetic
+  control that cannot reproduce a post-period level shift must leave. This
+  is the signature of a ridge-augmented `AugSynth` whose donor pool is as
+  large as the window (roughly `J >= T`) or whose `lambda_` is tiny relative
+  to `var(y)`: the refit interpolates every `h0`, the p-value stops
+  responding to `h0`, the interval runs to its search bounds and
+  `placebo_in_space` ratios explode, while the classical `Synth` is
+  unaffected. The `conformal_interval` truncation warning now names the
+  regime. Documented in `docs/known-issues.md` I-5, `docs/methodology.md`
+  §5.9 and the `conformal_interval` docstring; reproduced synthetically in
+  `tests/unit/test_inference_interpolation.py`. No estimate, p-value or
+  tolerance changes.
+- `docs/methodology.md` §5.10 and `docs/known-issues.md` I-6: the conformal
   refit under the null can absorb the effect it is testing. On trending
   (cumulative-sum) outcomes with a rich donor pool the full-window refit
   follows an injected step through simplex re-weighting (and, for
@@ -28,12 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statistic read the residuals (`1 - mean(post residuals) / (att_ - h0)`,
   `nan` at `h0 == att_`). `conformal_test` now emits a `UserWarning` once
   it reaches 0.75 while the gap exceeds the point fit's pre-period RMSPE —
-  the regime of §5.9 in which a large p-value is weak evidence against the
-  tested effect. `conformal_pvalue` is unchanged and stays silent on it,
+  the regime of §5.10 in which a large p-value is weak evidence against the
+  tested effect; skipped when the absorbed-null guard above already fired
+  on the same call. `conformal_pvalue` is unchanged and stays silent on it,
   being the per-refit primitive of `conformal_interval` and
   `simulate_power`. The field is appended to the frozen dataclass; code
   constructing `ConformalTestResult` by hand must now pass it.
-
 ### Changed
 
 - The R parity suite converts R data.frames to Polars directly

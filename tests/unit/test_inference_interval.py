@@ -239,8 +239,17 @@ def test_low_power_interval_expands_past_initial_grid_and_warns():
     # of magnitude wider, so any correct expansion must blow past it.
     assert 2.0 * initial_half_span < 1.0
 
-    with pytest.warns(UserWarning, match="truncated"):
+    # Two warnings fire here. The truncation guard is the one under test. The
+    # absorbed-null guard (_warn_if_null_absorbed, methodology.md 5.9) also
+    # fires once the grid probes an h0 far from att_: the +/-40 donor jumps let
+    # the refit reproduce the post-period shift, leaving only the 0.005 noise
+    # -- the "donors themselves move in the post period" mechanism its message
+    # names, the same no-power symptom as the J >= T interpolation it targets.
+    with pytest.warns(UserWarning) as rec:
         lo, hi = conformal_interval(fit, alpha=0.05, grid_size=101)
+    messages = [str(w.message) for w in rec]
+    assert any("truncated" in m for m in messages), messages
+    assert any("absorbed by the refit" in m for m in messages), messages
 
     assert np.isfinite(lo) and np.isfinite(hi)
     # Expansion happened: the upper bound moved well past the initial grid edge,

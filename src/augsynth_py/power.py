@@ -458,7 +458,7 @@ def simulate_power(
     **A flat-zero power curve can be the detection test, not the design.**
     The conformal refit under the null can explain an injected effect away
     on trending outcomes with a rich donor pool (``docs/methodology.md``
-    §5.9), leaving power at zero across effects an in-space placebo rejects
+    §5.10), leaving power at zero across effects an in-space placebo rejects
     throughout. Check the absorbed share described there on the largest
     injected effect before reading an MDE off such a curve.
 

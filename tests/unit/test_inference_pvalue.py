@@ -183,7 +183,7 @@ def test_injected_step_equals_h0_shift_of_unshifted_panel(delta):
     # conformal_null_residuals the same adjusted matrix as the unshifted panel
     # at h0=delta (it subtracts h0 from exactly those cells), so the residuals
     # and p-value are bit-identical. This is the lemma behind methodology.md
-    # §5.9: a sweep of injected effects *is* the p(h0) test-inversion curve of
+    # §5.10: a sweep of injected effects *is* the p(h0) test-inversion curve of
     # §5.5, non-monotonicity included.
     panel, t0 = _cumulative_panel()
     kw = dict(unit="unit", time="time", outcome="y", treated="u00", treatment_time=t0)
@@ -202,7 +202,7 @@ def test_injected_step_equals_h0_shift_of_unshifted_panel(delta):
 
 
 def test_null_refit_explains_most_of_an_injected_step_on_a_cumulative_panel():
-    # Characterises the power gap of methodology.md §5.9 / known-issues I-5:
+    # Characterises the power gap of methodology.md §5.10 / known-issues I-6:
     # on a trending outcome with a rich donor pool the full-window refit under
     # H0 follows the shifted post-period (re-weighting plus the full-window
     # fixed effect), so most of the estimated gap is explained away before the
@@ -235,7 +235,7 @@ def test_null_refit_explains_most_of_an_injected_step_on_a_cumulative_panel():
 
 
 def test_absorbed_share_is_the_documented_ratio_and_warns_on_the_cumulative_panel():
-    # The field is 1 - mean(post residuals) / (att_ - h0) (methodology §5.9);
+    # The field is 1 - mean(post residuals) / (att_ - h0) (methodology §5.10);
     # on this panel the refit explains ~0.89 of a 5-unit step, past the 0.75
     # warning threshold, and the step dwarfs the pre-period RMSPE, so
     # conformal_test warns.
