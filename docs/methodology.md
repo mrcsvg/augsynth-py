@@ -464,6 +464,13 @@ truncation/`UserWarning` branch. At $T = 1/\alpha$ exactly the floor equals
 $\alpha$, is rejected, and the region can be bounded — the degeneracy comes
 from the floor only strictly below $1/\alpha$.
 
+The most common way to end in that branch is not a small $T$ but an
+**interpolating refit**: a ridge-augmented `AugSynth` whose donor pool is as
+large as the window ($J \gtrsim T$) or whose `lambda_` is tiny relative to
+$\mathrm{var}(y)$ reproduces the $h_0$-adjusted treated series for every
+$h_0$, so every grid point is accepted and the returned bounds are simply the
+search bounds. §5.9 derives the condition and the `UserWarning` that flags it.
+
 This is distinct from an **empty** acceptance region, which returns `(nan, nan)`
 and which widening cannot fix. Empty requires the *peak* of $p(h_0)$ to fall
 to $\alpha$ or below — driven by residual **non-exchangeability** (a poor /
@@ -733,6 +740,97 @@ smallest-denominator rational (denominator $\le 10^6$) that rounds back to
 it, carries out the adjustment in exact rational arithmetic, and rounds
 once. This departs from `p.adjust` by at most a few ulps, well inside the
 parity tolerance (`tests/validation_against_r/test_adjust_pvalues.py`).
+
+### 5.9 Interpolating refits: no power when the ridge augmentation spans the window (I-5)
+
+The refit of §5.1 is what gives the CWZ test its power, and also what takes it
+away in one regime. Under $H_0: \tau = h_0$ the treated post-period is shifted
+by $h_0$ and the synthetic control is refit on all $T$ periods. Write
+$\delta = h_0 - \hat\tau$ for the part of the shift the pre-anchored point
+estimate `att_` does not account for. A synthetic control built from donors
+that did **not** receive a post-period shift cannot reproduce one: with
+`fixedeff=True` the full-window re-centring splits $\delta$ across the blocks
+exactly as in §5.6, $r_{\mathrm{post}} = \delta T_0 / T$ and
+$r_{\mathrm{pre}} = -\delta T_1 / T$, so the residual RMS of a non-absorbing
+refit is bounded below by
+
+$$
+\mathrm{RMS}_{\min}(h_0) \;=\; |\delta| \, \frac{\sqrt{T_0 T_1}}{T},
+$$
+
+and without re-centring by $|\delta|\sqrt{T_1/T}$, which is larger. Fit error
+only adds to it. On the synthetic probe of
+[`tests/unit/test_inference_interpolation.py`](../tests/unit/test_inference_interpolation.py)
+(45 pre / 15 post, bound $0.43$) both `Synth` and a 40-donor `AugSynth` sit
+at $0.41$–$0.47$ of the shift for every $h_0$: the refit cannot absorb it, the
+statistic grows with $|\delta|$, and the test has power.
+
+**Ridge augmentation is not bound by this.** The augmented refit solves the
+ridge problem of §2 on the unit- and period-demeaned full-window design. With
+`fixedeff=True` that design has rank up to $T - 1$ in a space of dimension
+$T - 1$, so once $J \ge T$ (without unit demeaning, $J \ge T + 1$) the donor
+columns span the treated series and the only thing keeping the residual off
+zero is the penalty: by the push-through identity the ridge residual is
+$\lambda \,(Y_0 Y_0^\top + \lambda I)^{-1} r_{\mathrm{scm}}$, of order
+$\lambda / \sigma^2$ relative to the SCM residual, where $\sigma^2$ is the
+scale of the design's eigenvalues. When LOO-CV selects a `lambda_` at the
+auto-grid floor $10^{-4}\,\mathrm{var}(y)$ — which is what happens on these
+panels, and the left-boundary warning of `fit` says so — the refit
+**interpolates** the $h_0$-adjusted series for *every* $h_0$:
+
+- the null residuals are solver noise, so the permutation test ranks noise
+  and returns a p-value that does not respond to $h_0$ (≈ 0.6 on the
+  motivating CAGED panel, 0.05–0.08 flat on the probe);
+- `conformal_interval` accepts the whole grid, the truncation guard of §5.3
+  doubles the span eight times and returns the search bounds
+  ($\hat\tau \pm 2^8 \cdot 6\,\mathrm{sd}(\text{post gap})$ — about
+  $\pm 13\,000$ on an outcome of scale 100);
+- the pre-period RMSPE of the treated fit is itself ~0, so the
+  `placebo_in_space` ratios of §7.1 explode (1e3–1e6 with 187 donors).
+
+Nothing is miscomputed: the point estimate is fine and the p-value is a valid
+permutation p-value — of a test with no power. The classical simplex fit
+cannot interpolate ($\omega \ge 0$, $\sum\omega = 1$) and gives a sensible
+p-value and interval on the same panel, which is why the symptom looks like
+an `AugSynth` bug. R `augsynth` refits at the fixed penalty too
+(`compute_permute_test_stats`, `progfunc = "Ridge"`) and is equally
+powerless there; the parity of §5.4 holds in this regime as in any other.
+
+The residual-to-shift ratio on the probe, `fixedeff=True`, as $J$ crosses $T = 60$:
+
+| $J$ | 40 | 55 | 58 | 59 | 60 | 62 | 70 | 80 | 120 |
+|---|---|---|---|---|---|---|---|---|---|
+| $\mathrm{RMS}/|\delta|$ | 0.43 | 0.09 | 1e-2 | 3e-3–2e-2 | 7e-4–3e-3 | 4e-4 | 1e-4 | 5e-5 | 1e-5 |
+
+The transition is about the selected penalty as much as about $J$: with
+`fixedeff=False` on the same panels CV picks a large `lambda_` and the ratio
+stays at $0.33$–$0.46$ throughout.
+
+**Diagnostic.** `_warn_if_null_absorbed`, called by `conformal_pvalue` and
+`conformal_test` (hence at every grid point of `conformal_interval`), emits a
+`UserWarning` when the observed residual RMS under $h_0$ is below
+`_ABSORBED_SHIFT_FRACTION` $= 5\,\%$ of $\mathrm{RMS}_{\min}(h_0)$ — the
+refit absorbed more than 95 % of the shift it was asked to explain. The bound
+is one to two orders of magnitude above the interpolating values and well
+below anything a non-absorbing refit can produce ($\sqrt{T - 1}/T \ge 0.03$
+even for a single post period at $T = 1000$), so the fraction has slack on
+both sides. The guard is silent at $h_0 = \hat\tau$, where there is nothing
+to absorb and near-zero residuals mean a perfect fit, not interpolation; the
+interval's grid always probes far from $\hat\tau$. The message carries no
+per-$h_0$ figures, so the default warning filter shows it once per call site
+rather than once per grid point, as for §5.6. The same signature — residuals
+well above solver noise but still a small fraction of the bound — arises when
+the donors themselves move in the post period and can reproduce the shift
+(`test_low_power_interval_expands_past_initial_grid_and_warns`); the message
+names both mechanisms. The truncation warning of §5.3 names the regime as
+well. Neither changes any returned value.
+
+**Remedies** are design-level: shrink the donor pool well below $T$, fix a
+larger `lambda_` (which trades pre-period fit for a refit that can no longer
+absorb the shift), or use `Synth`. An estimator-side guard on $J \ge T$ at a
+near-zero penalty, or re-selecting `lambda_` on the full window under each
+$h_0$, would be API or parity changes and are recorded as the closing options
+in `known-issues.md` I-5.
 
 ---
 

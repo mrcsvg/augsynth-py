@@ -181,6 +181,102 @@ def _warn_if_post_dominated(fit: _FittedSC, post_mask: NDArray[np.bool_]) -> Non
     )
 
 
+# Fraction of the no-absorption residual bound below which the refit under
+# ``h0`` is deemed to have absorbed the null shift instead of testing it. See
+# _warn_if_null_absorbed for the bound; interpolating ridge refits sit at
+# 1e-4 to 1e-5 of it, fits with J just below T at 1e-2 to 1e-3, and fits that
+# cannot absorb the shift at or above 1.
+_ABSORBED_SHIFT_FRACTION = 0.05
+
+
+def _warn_if_null_absorbed(
+    fit: _FittedSC,
+    residuals: NDArray[np.float64],
+    post_mask: NDArray[np.bool_],
+    h0: float,
+) -> None:
+    r"""Warn when the refit under ``h0`` reproduces the adjusted series exactly.
+
+    CWZ 2021 tests :math:`H_0: \tau = h_0` by refitting the synthetic control
+    on the **whole** window after subtracting ``h0`` from the treated
+    post-period (§5.1 of ``docs/methodology.md``). The test has power only
+    because a synthetic control built from donors that did *not* receive a
+    post-period shift cannot reproduce one: the shift
+    :math:`\delta = h_0 - \hat\tau` (``att_`` is the pre-anchored point
+    estimate) must surface in the residuals. With ``fixedeff=True`` the
+    full-window re-centring splits it as :math:`r_{\mathrm{post}} = \delta
+    T_0 / T` and :math:`r_{\mathrm{pre}} = -\delta T_1 / T`
+    (:func:`_warn_if_post_dominated`), so the residual RMS of a
+    non-absorbing refit is at least
+
+    .. math::
+
+        \mathrm{RMS}_{\min} = |\delta| \, \frac{\sqrt{T_0 T_1}}{T},
+
+    and without re-centring it is :math:`|\delta| \sqrt{T_1 / T}`, which is
+    larger. Fit error only adds to it.
+
+    A ridge-augmented refit (:class:`~augsynth_py.synth.augmented.AugSynth`)
+    whose donor pool is as large as the window — roughly :math:`J \ge T` —
+    or whose penalty ``lambda_`` is tiny relative to :math:`\mathrm{var}(y)`
+    is not bound by this: it **interpolates** the ``h0``-adjusted treated
+    series, so the residuals are near zero for *every* ``h0``. The
+    permutation test then ranks solver noise, the p-value no longer responds
+    to ``h0`` (it hovers at a data-independent value), :func:`conformal_interval`
+    accepts the whole grid and runs to its search bounds, and
+    :func:`~augsynth_py.robustness.placebo_in_space` RMSPE ratios explode
+    because the pre-period RMSPE of the treated fit is itself ~0. The
+    classical simplex fit (:class:`~augsynth_py.synth.classical.Synth`)
+    cannot interpolate and is unaffected. The same signature — with
+    residuals well above solver noise — arises when the donors themselves
+    move in the post period and so can reproduce the shift.
+
+    This guard fires when the observed RMS is below
+    ``_ABSORBED_SHIFT_FRACTION`` of :math:`\mathrm{RMS}_{\min}`, i.e. the
+    refit absorbed more than 95 % of the shift it was asked to explain. It
+    is silent at ``h0 == att_`` (nothing to absorb), so it cannot see an
+    interpolating fit from a single p-value at the point estimate; the grid
+    of :func:`conformal_interval` always probes far from it. The message
+    carries no per-``h0`` figures, so the default warning filter shows it
+    once per call site rather than once per grid point. See
+    ``docs/known-issues.md`` I-5 and ``docs/methodology.md`` §5.9.
+    """
+    shift = abs(float(h0) - float(fit.att_))
+    if not np.isfinite(shift) or shift == 0.0:
+        return
+    n_total = int(post_mask.shape[0])
+    n_post = int(np.count_nonzero(post_mask))
+    n_pre = n_total - n_post
+    if n_pre == 0 or n_post == 0:
+        return
+    rms_min = shift * float(np.sqrt(n_pre * n_post)) / n_total
+    rms = float(np.sqrt(np.mean(np.square(residuals))))
+    if rms > _ABSORBED_SHIFT_FRACTION * rms_min:
+        return
+    n_donors = len(getattr(fit, "weights_", ()))
+    donors = f", {n_donors} donors" if n_donors else ""
+    warnings.warn(
+        "conformal inference: the full-window refit under h0 reproduces the "
+        "h0-adjusted treated series almost exactly — its residuals keep under "
+        f"{_ABSORBED_SHIFT_FRACTION:.0%} of the RMS a synthetic control that "
+        "cannot reproduce a post-period level shift must leave "
+        f"(|h0 - att_| * sqrt(T0 * T1) / T; here T0={n_pre}, T1={n_post}{donors}). "
+        "The null is being absorbed by the refit rather than tested: the "
+        "p-value is then insensitive to h0, conformal_interval accepts the "
+        "whole grid and runs to its search bounds, and placebo_in_space RMSPE "
+        "ratios can explode. This is the signature of a ridge-augmented "
+        "AugSynth whose donor pool is as large as the window (J >= T) or whose "
+        "lambda_ is tiny relative to var(y), where the refit interpolates any "
+        "h0 (docs/known-issues.md I-5, docs/methodology.md §5.9); it also "
+        "arises when the donors themselves move in the post period. Shrink the "
+        "donor pool well below T, fix a larger lambda_, or use the classical "
+        "Synth, whose simplex weights cannot interpolate. The estimates are "
+        "unchanged; only the inference is uninformative here.",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def _permutation_distribution(
     residuals: NDArray[np.float64],
     post_mask: NDArray[np.bool_],
@@ -455,6 +551,16 @@ def conformal_test(
         The p-value together with the observed statistic, the permutation
         reference distribution, the null residuals, and the test metadata.
 
+    Notes
+    -----
+    Emits the same two :class:`UserWarning` diagnostics as
+    :func:`conformal_pvalue`: the post-dominated-window guard
+    (:func:`_warn_if_post_dominated`) and the absorbed-null guard
+    (:func:`_warn_if_null_absorbed`, see *Notes* there). ``residuals`` on the
+    returned object is the vector the latter inspects, so a flagged test can
+    be checked directly: in the interpolating regime it is near zero at every
+    ``h0``.
+
     References
     ----------
     Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An Exact and Robust
@@ -467,6 +573,7 @@ def conformal_test(
         residuals, post_mask, side, permutation_type, block_size, ns, rng
     )
     _warn_if_post_dominated(fit, post_mask)
+    _warn_if_null_absorbed(fit, residuals, post_mask, h0)
     return ConformalTestResult(
         pvalue=_pvalue_from_distribution(statistic, null_distribution, observed_included),
         statistic=statistic,
@@ -571,6 +678,21 @@ def conformal_pvalue(
     :func:`adjust_pvalues` when several conformal p-values are reported
     together.
 
+    **Interpolating refits have no power.** The test rejects only because a
+    synthetic control built from untreated donors cannot reproduce a
+    post-period level shift, so the shift ``h0 - att_`` surfaces in the
+    refit residuals. A ridge-augmented :class:`~augsynth_py.synth.augmented.AugSynth`
+    whose donor pool is as large as the window (roughly ``J >= T``) or whose
+    ``lambda_`` is tiny relative to ``var(y)`` is not bound by this: it
+    interpolates the adjusted series under *every* ``h0``, the residuals are
+    solver noise, and the p-value stops responding to ``h0``. The classical
+    :class:`~augsynth_py.synth.classical.Synth` cannot interpolate and is
+    unaffected. When the residuals under ``h0`` keep under 5 % of the RMS a
+    non-absorbing refit must leave, a :class:`UserWarning` is emitted
+    (:func:`_warn_if_null_absorbed`); the p-value is still returned
+    unchanged. The guard needs ``h0 != att_`` to have anything to detect.
+    See ``docs/known-issues.md`` I-5 and ``docs/methodology.md`` §5.9.
+
     The planned sibling ``geoexp`` package will map its public arguments onto
     this function: ``conformal_type`` -> ``permutation_type`` and
     ``side_of_test`` -> ``side``.
@@ -587,6 +709,7 @@ def conformal_pvalue(
         residuals, post_mask, side, permutation_type, ns, rng, block_size=block_size
     )
     _warn_if_post_dominated(fit, post_mask)
+    _warn_if_null_absorbed(fit, residuals, post_mask, h0)
     return pvalue
 
 
@@ -739,6 +862,29 @@ def conformal_interval(
     which widening cannot fix; here a boundary-reaching region is accepted and
     widening extends it.
 
+    **Interpolating refits (no power).** The most common way to reach the
+    truncation guard is a ridge-augmented
+    :class:`~augsynth_py.synth.augmented.AugSynth` whose donor pool is as
+    large as the window — roughly ``J >= T`` — or whose ``lambda_`` is tiny
+    relative to ``var(y)``: the full-window refit then *interpolates* the
+    ``h0``-adjusted treated series for **every** ``h0``, the null residuals
+    are solver noise at every grid point, every ``h0`` is accepted, and the
+    returned bounds are simply the search bounds (``center ± 2**8 * 6 *
+    sd(post gap)`` after the cap) — tens of thousands of outcome units on a
+    panel whose outcome is ~100 is typical. The accompanying symptoms are a
+    p-value that does not respond to ``h0`` (and a near-zero ``rmspe_pre_``
+    on the fit), and exploding ``placebo_in_space`` RMSPE ratios. The
+    classical :class:`~augsynth_py.synth.classical.Synth` cannot interpolate
+    and gives a sensible interval on the same panel. Two :class:`UserWarning`
+    diagnostics fire in this regime: the absorbed-null guard of
+    :func:`conformal_pvalue` (:func:`_warn_if_null_absorbed`), once the grid
+    probes an ``h0`` away from ``att_`` whose refit residuals keep under 5 %
+    of the RMS a non-absorbing refit must leave, and the truncation guard
+    above when the acceptance region still reaches the search bounds. Neither
+    changes the returned values. Remedies are design-level: shrink the donor
+    pool well below ``T``, fix a larger ``lambda_``, or use ``Synth``. See
+    ``docs/known-issues.md`` I-5 and ``docs/methodology.md`` §5.9.
+
     **Non-contiguity warning.** The acceptance region of the refit-under-null
     test is not guaranteed to be an interval: because the residuals depend on
     ``h0`` through the refit, ``p(h0)`` can dip to or below ``alpha`` on a stretch
@@ -850,7 +996,12 @@ def conformal_interval(
             f"(final half-width {spread:g} about center {center:g}). The "
             "returned bounds understate the interval; the estimator likely has "
             "little conformal power (the test accepts h0 across a very wide "
-            "range). Treat the bounds as a lower bound on the true interval.",
+            "range). Treat the bounds as a lower bound on the true interval. "
+            "If the fit is a ridge-augmented AugSynth with a donor pool as "
+            "large as the window (J >= T) or a lambda_ tiny relative to "
+            "var(y), the full-window refit interpolates every h0 and the test "
+            "has no power at all — the bounds are then just the search bounds "
+            "(docs/known-issues.md I-5, docs/methodology.md §5.9).",
             UserWarning,
             stacklevel=2,
         )
