@@ -167,3 +167,112 @@ to `SCtools` for (1) — either reorder `names.and.numbers` to match
 workarounds are in place and explained inline in the test, and this entry
 exists so the next person reading `Sigf.ipop = 4` and `sort(...)` in the
 harness knows why.
+
+---
+
+## I-5 — The conformal null refit absorbs the effect under test; no power on rich donor pools with trending outcomes
+
+**Status:** open, behaviour confirmed faithful to CWZ 2021 and R `augsynth`;
+what is missing is a diagnostic. Opened 2026-10-20.
+**Module:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
+— `conformal_pvalue` / `conformal_test`, via `conformal_null_residuals` on
+`Synth` and `AugSynth`; surfaces through
+[`src/augsynth_py/power.py`](../src/augsynth_py/power.py) as flat-zero power.
+
+**Observed.** On an applied panel (`Synth(fixedeff=True)`, 58 donors, 43 pre
++ 13 post monthly periods, cumulative level outcome, raw pre-RMSPE ≈ 3.8) a
+permanent step of −10 … −80 units injected into the treated post-period took
+`placebo_in_space` from rank 52/59 to rank 1/59 ($p = 0.017$), while the
+block conformal p-value went 0.34, 0.36, 0.45, 0.50, 0.39, 0.23, 0.14, 0.11
+for steps 0, 10, 20, 30, 40, 52, 64, 80: non-monotone and never below 0.10.
+`simulate_power` (additive, duration 13, 8 windows) reported power 0.0 at
+every size.
+
+**Diagnosis.** Not a bug. The refit under $H_0$ (full window, fixed effect
+estimated on all $T$ periods, statistic $\sum_{\text{post}} |\hat u_t|$
+against all $T$ cyclic shifts) is CWZ 2021 §3 and bit-matches R `augsynth`
+(`tests/validation_against_r/test_conformal.py`). Under the alternative that
+refit is free to fit the effect, and does, through three channels: the
+full-window fixed effect (share $T_1/T$, §5.6), simplex re-weighting to a
+donor combination that follows the shifted post-period at the cost of a
+smooth pre-period misfit (on trending outcomes a step is approximated by a
+slope change; a rich donor pool makes this cheap), and ridge interpolation
+in `AugSynth` when $J$ approaches $T$. On the synthetic reproduction the
+null refit explains 0.78 / 0.69 / 0.56 of a 10 / 20 / 40-unit step, of which
+the fixed effect accounts for 0.21–0.23 ($T_1/T = 0.232$); `AugSynth`
+explains 102–115% of it and returns $p \in [0.79, 1.0]$ at every size. The
+non-monotonicity is exact: injecting $-\delta$ and testing $h_0 = 0$ equals
+testing $h_0 = \delta$ on the unshifted panel (pinned by
+`test_injected_step_equals_h0_shift_of_unshifted_panel`), so a sweep over
+injected effects *is* the §5.5 test-inversion curve, which is known to be
+non-monotone and is R-identical. Full write-up with the decomposition and
+moderators (donor-pool size, stationary vs cumulative outcomes, estimator):
+`methodology.md` §5.9.
+
+**Reproduce.**
+
+```python
+import warnings
+import numpy as np, polars as pl
+from augsynth_py import Synth, AugSynth, conformal_test
+from augsynth_py.robustness import placebo_in_space
+
+warnings.simplefilter("ignore")
+rng = np.random.default_rng(0)
+t0, t1, n_donors = 43, 13, 58
+T, n = t0 + t1, n_donors + 1
+drift = rng.uniform(0.3, 1.2, size=n)
+level = rng.uniform(30, 60, size=n)
+y = level[None, :] + np.cumsum(drift[None, :] + rng.normal(size=(T, n)), axis=0)
+y[:, 0] = y[:, 1:6] @ rng.dirichlet(np.ones(5)) + np.cumsum(0.5 * rng.normal(size=T))
+units = [f"u{i:02d}" for i in range(n)]
+periods = np.arange(1, T + 1)
+panel = pl.DataFrame({
+    "unit": [u for u in units for _ in periods],
+    "time": np.tile(periods, n),
+    "y": y.T.reshape(-1),
+})
+kw = dict(unit="unit", time="time", outcome="y", treated="u00", treatment_time=periods[t0])
+
+for delta in (0, 10, 20, 30, 40, 52, 64, 80):
+    step = (pl.col("unit") == "u00") & (pl.col("time") >= periods[t0])
+    shifted = panel.with_columns(pl.when(step).then(pl.col("y") - delta).otherwise(pl.col("y")).alias("y"))
+    fit = Synth().fit(shifted, **kw)
+    res = conformal_test(fit, 0.0)
+    absorbed = 1 - res.residuals[~fit.pre_mask_].mean() / fit.att_   # share of att_ the null refit explains
+    p_aug = conformal_test(AugSynth().fit(shifted, **kw), 0.0).pvalue
+    print(f"delta={delta:>2} att={fit.att_:7.1f} p_synth={res.pvalue:.3f} "
+          f"p_augsynth={p_aug:.3f} absorbed={absorbed:.2f} "
+          f"p_placebo={placebo_in_space(fit).pvalue:.3f}")
+```
+
+Expected (seed 0): `p_synth` 0.732, 0.214, 0.214, 0.214, 0.125, 0.018,
+0.018, 0.018; `p_placebo` 0.576 then 0.017 throughout; `absorbed` 0.84,
+0.72, 0.66, 0.57, 0.49, 0.44, 0.40 at δ = 10 … 80; `p_augsynth` ≥ 0.78 everywhere. Replace
+the cumulative sum by a stationary AR(1) around the level and `p_synth`
+rejects from δ = 5.
+
+**Why it matters.** A user who runs `simulate_power` on a panel like this
+reads an MDE that does not exist — the curve is flat at zero because the
+detection test cannot see the effect, not because the design is weak — and
+a user who compares the conformal p-value with the placebo rank concludes
+one of the two is broken. Neither the warning of §5.6 (which needs
+$T_1 \ge T_0$) nor anything else in the API currently signals the regime.
+
+**What would close it.**
+
+1. Expose the absorbed share at test time: `ConformalTestResult` already
+   holds `residuals` and `post_mask`, so
+   $1 - \overline{\hat u}_{\text{post}} / \texttt{att\_}$ (for $h_0 = 0$;
+   in general $1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$)
+   is one field away, and a `UserWarning` past a threshold (say 0.75) would
+   mirror `_warn_if_post_dominated`. Public-API addition — needs maintainer
+   sign-off per `CLAUDE.md`.
+2. Confirm the moderators against R `augsynth` on a trending panel via the
+   `workflow_dispatch` parity job (not the stationary `GeoLift_PreTest`
+   fixture, which cannot show the effect), so the "faithful" claim rests on
+   the exposed regime too and not only on the existing fixtures.
+3. Decide whether `simulate_power` should refuse, or at least warn, when
+   the `effect_size = 0` row and the largest-effect row both detect nothing
+   while the absorbed share on the largest effect exceeds the threshold —
+   the cheapest place to stop a meaningless MDE from being reported.

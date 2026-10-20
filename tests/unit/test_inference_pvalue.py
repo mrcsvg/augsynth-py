@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from augsynth_py.inference import conformal_pvalue
+from augsynth_py.inference import conformal_pvalue, conformal_test
 from augsynth_py.synth.augmented import AugSynth
 from augsynth_py.synth.classical import Synth
 
@@ -142,3 +142,85 @@ def test_conformal_pvalue_does_not_mutate_fitted_state():
     conformal_pvalue(fit, 5.0)
     np.testing.assert_array_equal(fit.gap_, gap_snapshot)
     np.testing.assert_array_equal(fit._y_matrix, matrix_snapshot)
+
+
+def _cumulative_panel(
+    seed: int = 0, n_donors: int = 20, t0: int = 22, t1: int = 8
+) -> tuple[pl.DataFrame, int]:
+    # Random walks with unit-specific drift (a cumulative-sum style outcome);
+    # the treated unit is a convex combination of five donors plus its own
+    # walk, so it sits inside the donor hull and the pre-period fit is tight.
+    rng = np.random.default_rng(seed)
+    T, n = t0 + t1, n_donors + 1  # noqa: N806
+    drift = rng.uniform(0.3, 1.2, size=n)
+    level = rng.uniform(30.0, 60.0, size=n)
+    y = level[None, :] + np.cumsum(drift[None, :] + rng.normal(size=(T, n)), axis=0)
+    y[:, 0] = y[:, 1:6] @ rng.dirichlet(np.ones(5)) + np.cumsum(0.5 * rng.normal(size=T))
+    units = [f"u{i:02d}" for i in range(n)]
+    periods = np.arange(T)
+    panel = pl.DataFrame(
+        {
+            "unit": [u for u in units for _ in periods],
+            "time": np.tile(periods, n),
+            "y": y.T.reshape(-1),
+        }
+    )
+    return panel, t0
+
+
+def _subtract_step(panel: pl.DataFrame, delta: float, treatment_time: int) -> pl.DataFrame:
+    in_post = (pl.col("unit") == "u00") & (pl.col("time") >= treatment_time)
+    return panel.with_columns(
+        pl.when(in_post).then(pl.col("y") - delta).otherwise(pl.col("y")).alias("y")
+    )
+
+
+@pytest.mark.parametrize("delta", [0.5, 5.0, 20.0])
+def test_injected_step_equals_h0_shift_of_unshifted_panel(delta):
+    # Subtracting `delta` from the treated post-period and testing h0=0 hands
+    # conformal_null_residuals the same adjusted matrix as the unshifted panel
+    # at h0=delta (it subtracts h0 from exactly those cells), so the residuals
+    # and p-value are bit-identical. This is the lemma behind methodology.md
+    # §5.9: a sweep of injected effects *is* the p(h0) test-inversion curve of
+    # §5.5, non-monotonicity included.
+    panel, t0 = _cumulative_panel()
+    kw = dict(unit="unit", time="time", outcome="y", treated="u00", treatment_time=t0)
+    base = Synth(fixedeff=True).fit(panel, **kw)
+    shifted = Synth(fixedeff=True).fit(_subtract_step(panel, delta, t0), **kw)
+
+    via_injection = conformal_test(shifted, 0.0)
+    via_h0 = conformal_test(base, delta)
+
+    assert np.array_equal(via_injection.residuals, via_h0.residuals)
+    assert via_injection.pvalue == via_h0.pvalue
+
+
+def test_null_refit_explains_most_of_an_injected_step_on_a_cumulative_panel():
+    # Characterises the power gap of methodology.md §5.9 / known-issues I-5:
+    # on a trending outcome with a rich donor pool the full-window refit under
+    # H0 follows the shifted post-period (re-weighting plus the full-window
+    # fixed effect), so most of the estimated gap is explained away before the
+    # statistic reads the post residuals. The share is far above the
+    # fixed-effect share T1/T alone (§5.6); on this panel it is ~0.89.
+    panel, t0 = _cumulative_panel()
+    delta = 5.0
+    fit = Synth(fixedeff=True).fit(
+        _subtract_step(panel, delta, t0),
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="u00",
+        treatment_time=t0,
+    )
+    post = ~fit.pre_mask_
+    pre_rmspe = float(np.sqrt(np.mean(fit.gap_[fit.pre_mask_] ** 2)))
+    assert delta > 10 * pre_rmspe  # the step is unmistakable on the pre-fit scale
+    assert fit.att_ < -delta / 2  # and the point estimate sees it
+
+    res = conformal_test(fit, 0.0)
+    absorbed = 1.0 - float(res.residuals[post].mean()) / fit.att_
+    fixed_effect_share = post.sum() / post.shape[0]
+    assert absorbed > 0.5
+    assert absorbed > fixed_effect_share + 0.2
+    # ... and the test does not reject at 10% despite a step > 10 pre-RMSPEs.
+    assert res.pvalue > 0.1

@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/methodology.md` §5.9 and `docs/known-issues.md` I-5: the conformal
+  refit under the null can absorb the effect it is testing. On trending
+  (cumulative-sum) outcomes with a rich donor pool the full-window refit
+  follows an injected step through simplex re-weighting (and, for
+  `AugSynth` with as many donors as periods, ridge interpolation), on top of
+  the fixed-effect share `T1/T` of §5.6, so `conformal_pvalue` can fail to
+  reject effects that `placebo_in_space` ranks first and `simulate_power`
+  reports a flat-zero curve. Confirmed faithful to CWZ 2021 and R
+  `augsynth`; documented with a synthetic reproduction, the decomposition
+  of the absorbed share, its moderators, and the identity
+  `p(panel - delta on post, h0=0) == p(panel, h0=delta)` that makes a
+  non-monotone p-value in the injected effect the already-known §5.5
+  curve. Two unit tests pin the identity and the absorbed share.
+
 ### Changed
 
 - The R parity suite converts R data.frames to Polars directly

@@ -571,6 +571,20 @@ def conformal_pvalue(
     :func:`adjust_pvalues` when several conformal p-values are reported
     together.
 
+    **Power caveat.** The refit under the null is free to fit the very effect
+    being tested: through the full-window fixed effect (share ``T1/T``,
+    ``docs/methodology.md`` §5.6), through simplex re-weighting on a rich
+    donor pool — on trending outcomes a level step is cheaply approximated
+    by a slope change — and, for :class:`~augsynth_py.synth.augmented.AugSynth`
+    with as many donors as periods, through ridge interpolation. Each
+    removes part of the effect from the post residuals before the statistic
+    reads them, so the test can fail to reject effects an in-space placebo
+    (:func:`~augsynth_py.robustness.placebo_in_space`) ranks first, and
+    ``p`` need not fall monotonically as the true effect grows. The share
+    of ``att_`` the refit explained is
+    ``1 - mean(residuals[post]) / att_`` on a :func:`conformal_test`
+    result; see ``docs/methodology.md`` §5.9.
+
     The planned sibling ``geoexp`` package will map its public arguments onto
     this function: ``conformal_type`` -> ``permutation_type`` and
     ``side_of_test`` -> ``side``.
