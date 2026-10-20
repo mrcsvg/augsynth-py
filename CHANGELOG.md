@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `UserWarning` from `conformal_pvalue` / `conformal_test` (and therefore
+  `conformal_interval`) when the CWZ refit under `h0` absorbs the null
+  instead of testing it: the residuals keep under 5 % of the RMS a synthetic
+  control that cannot reproduce a post-period level shift must leave. This
+  is the signature of a ridge-augmented `AugSynth` whose donor pool is as
+  large as the window (roughly `J >= T`) or whose `lambda_` is tiny relative
+  to `var(y)`: the refit interpolates every `h0`, the p-value stops
+  responding to `h0`, the interval runs to its search bounds and
+  `placebo_in_space` ratios explode, while the classical `Synth` is
+  unaffected. The `conformal_interval` truncation warning now names the
+  regime. Documented in `docs/known-issues.md` I-5, `docs/methodology.md`
+  §5.9 and the `conformal_interval` docstring; reproduced synthetically in
+  `tests/unit/test_inference_interpolation.py`. No estimate, p-value or
+  tolerance changes.
+
 ### Changed
 
 - The R parity suite converts R data.frames to Polars directly
