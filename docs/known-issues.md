@@ -227,23 +227,31 @@ y = level[None, :] + np.cumsum(drift[None, :] + rng.normal(size=(T, n)), axis=0)
 y[:, 0] = y[:, 1:6] @ rng.dirichlet(np.ones(5)) + np.cumsum(0.5 * rng.normal(size=T))
 units = [f"u{i:02d}" for i in range(n)]
 periods = np.arange(1, T + 1)
-panel = pl.DataFrame({
-    "unit": [u for u in units for _ in periods],
-    "time": np.tile(periods, n),
-    "y": y.T.reshape(-1),
-})
+panel = pl.DataFrame(
+    {
+        "unit": [u for u in units for _ in periods],
+        "time": np.tile(periods, n),
+        "y": y.T.reshape(-1),
+    }
+)
 kw = dict(unit="unit", time="time", outcome="y", treated="u00", treatment_time=periods[t0])
 
 for delta in (0, 10, 20, 30, 40, 52, 64, 80):
     step = (pl.col("unit") == "u00") & (pl.col("time") >= periods[t0])
-    shifted = panel.with_columns(pl.when(step).then(pl.col("y") - delta).otherwise(pl.col("y")).alias("y"))
+    shifted = panel.with_columns(
+        pl.when(step).then(pl.col("y") - delta).otherwise(pl.col("y")).alias("y")
+    )
     fit = Synth().fit(shifted, **kw)
     res = conformal_test(fit, 0.0)
-    absorbed = 1 - res.residuals[~fit.pre_mask_].mean() / fit.att_   # share of att_ the null refit explains
+    absorbed = (
+        1 - res.residuals[~fit.pre_mask_].mean() / fit.att_
+    )  # share of att_ the null refit explains
     p_aug = conformal_test(AugSynth().fit(shifted, **kw), 0.0).pvalue
-    print(f"delta={delta:>2} att={fit.att_:7.1f} p_synth={res.pvalue:.3f} "
-          f"p_augsynth={p_aug:.3f} absorbed={absorbed:.2f} "
-          f"p_placebo={placebo_in_space(fit).pvalue:.3f}")
+    print(
+        f"delta={delta:>2} att={fit.att_:7.1f} p_synth={res.pvalue:.3f} "
+        f"p_augsynth={p_aug:.3f} absorbed={absorbed:.2f} "
+        f"p_placebo={placebo_in_space(fit).pvalue:.3f}"
+    )
 ```
 
 Expected (seed 0): `p_synth` 0.732, 0.214, 0.214, 0.214, 0.125, 0.018,
