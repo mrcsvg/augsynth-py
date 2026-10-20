@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - A `UserWarning` from `conformal_pvalue` / `conformal_test` (and therefore
   `conformal_interval`) when the CWZ refit under `h0` absorbs the null
   instead of testing it: the residuals keep under 5 % of the RMS a synthetic
