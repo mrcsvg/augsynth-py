@@ -24,7 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   §5.9 and the `conformal_interval` docstring; reproduced synthetically in
   `tests/unit/test_inference_interpolation.py`. No estimate, p-value or
   tolerance changes.
-
+- `docs/methodology.md` §5.10 and `docs/known-issues.md` I-6: the conformal
+  refit under the null can absorb the effect it is testing. On trending
+  (cumulative-sum) outcomes with a rich donor pool the full-window refit
+  follows an injected step through simplex re-weighting (and, for
+  `AugSynth` with as many donors as periods, ridge interpolation), on top of
+  the fixed-effect share `T1/T` of §5.6, so `conformal_pvalue` can fail to
+  reject effects that `placebo_in_space` ranks first and `simulate_power`
+  reports a flat-zero curve. Confirmed faithful to CWZ 2021 and R
+  `augsynth`; documented with a synthetic reproduction, the decomposition
+  of the absorbed share, its moderators, and the identity
+  `p(panel - delta on post, h0=0) == p(panel, h0=delta)` that makes a
+  non-monotone p-value in the injected effect the already-known §5.5
+  curve. Two unit tests pin the identity and the absorbed share.
+- `ConformalTestResult.absorbed_share`: the share of the gap under test,
+  `att_ - h0`, that the refit under the null explained away before the
+  statistic read the residuals (`1 - mean(post residuals) / (att_ - h0)`,
+  `nan` at `h0 == att_`). `conformal_test` now emits a `UserWarning` once
+  it reaches 0.75 while the gap exceeds the point fit's pre-period RMSPE —
+  the regime of §5.10 in which a large p-value is weak evidence against the
+  tested effect; skipped when the absorbed-null guard above already fired
+  on the same call. `conformal_pvalue` is unchanged and stays silent on it,
+  being the per-refit primitive of `conformal_interval` and
+  `simulate_power`. The field is appended to the frozen dataclass; code
+  constructing `ConformalTestResult` by hand must now pass it.
 ### Changed
 
 - The R parity suite converts R data.frames to Polars directly

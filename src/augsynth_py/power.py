@@ -455,6 +455,13 @@ def simulate_power(
 
     Notes
     -----
+    **A flat-zero power curve can be the detection test, not the design.**
+    The conformal refit under the null can explain an injected effect away
+    on trending outcomes with a rich donor pool (``docs/methodology.md``
+    §5.10), leaving power at zero across effects an in-space placebo rejects
+    throughout. Check the absorbed share described there on the largest
+    injected effect before reading an MDE off such a curve.
+
     **Cross-validated penalties.** ``AugSynth()`` with no explicit ``lambda_``
     re-runs its LOO-CV inside every simulation — the R-faithful behaviour
     (GeoLift refits ``augsynth`` per simulation), at roughly one CV per fit.

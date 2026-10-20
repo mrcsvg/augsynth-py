@@ -672,7 +672,11 @@ remedies that change the ratio itself are the reliable ones: shorten the
 evaluation window ($T_1 \downarrow$) or lengthen the pre-period
 ($T_0 \uparrow$). On the same panel a 9/3 split reaches the $1/T$ floor at a
 50 % injected reduction. Placebo-in-space inference uses no refit and is
-unaffected either way.
+unaffected either way. This fixed-effect share is one of three channels by
+which the null refit can absorb the effect under test; the other two —
+simplex re-weighting on a rich donor pool and ridge interpolation — are not
+bounded by $T_1/T$ and are the subject of §5.10 (§5.9 for the interpolating
+limit).
 
 ### 5.7 Cost note for `geoexp`
 
@@ -707,7 +711,14 @@ p-value for the same arguments and `rng` state) and returns a
 - `observed_included` — which p-value convention applies, so `pvalue` is
   recomputable from the exposed pieces:
   $p = \#\{S_j \ge S_\text{obs}\}/n$ when the identity is a member (cyclic
-  shifts), $p = (1 + \#\{S \ge S_\text{obs}\})/(1 + n)$ otherwise.
+  shifts), $p = (1 + \#\{S \ge S_\text{obs}\})/(1 + n)$ otherwise;
+- `absorbed_share` — the share of the gap under test, `att_ - h0`, that
+  the null refit explained away before the statistic read the residuals
+  (§5.10): $1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$,
+  `nan` at `h0 == att_`. `conformal_test` warns once it reaches 0.75 while
+  the gap exceeds the point fit's pre-period RMSPE; `conformal_pvalue`
+  stays silent on it, being the per-refit primitive of `conformal_interval`
+  and `simulate_power`.
 
 The motivating use is graphical: plot a histogram of `null_distribution` with
 a vertical line at `statistic` to *show* that the observed post-treatment
@@ -830,9 +841,197 @@ larger `lambda_` (which trades pre-period fit for a refit that can no longer
 absorb the shift), or use `Synth`. An estimator-side guard on $J \ge T$ at a
 near-zero penalty, or re-selecting `lambda_` on the full window under each
 $h_0$, would be API or parity changes and are recorded as the closing options
-in `known-issues.md` I-5.
+in `known-issues.md` I-5. Interpolation is the limiting case of a broader
+mechanism — the refit absorbing part of the effect by simplex re-weighting
+even when it cannot interpolate — treated in §5.10 together with the
+`absorbed_share` diagnostic on `ConformalTestResult`.
 
 ---
+
+### 5.10 The null refit can absorb the effect it is testing (I-6)
+
+The refit of §5.1 is what makes the test exact under $H_0$; it is also what
+bounds its power. Under the alternative, the $h_0$-adjusted treated series
+still carries the true effect, and the refit is free to *fit* it: every bit
+of the effect the full-window synthetic control explains away is removed
+from the post-period residuals before the statistic of §5.2 reads them.
+Three channels do this, and together they can leave a conformal test with
+no power against effects an in-space placebo (§7.1) ranks first among all
+units.
+
+1. **The fixed effect** (§5.6). With `fixedeff=True` the refit re-centres
+   on the full-window mean, which removes a share $T_1/T$ of a constant
+   effect from the post block.
+2. **Re-weighting on the simplex.** The pre-period fit and the null refit
+   are different QPs: the null refit can move to a different donor
+   combination that follows the shifted post-period at the cost of a
+   smooth, spread-out pre-period misfit. On trending (cumulative-sum,
+   random-walk-with-drift) outcomes a level step is well approximated by a
+   change of slope — move weight to donors with a lower drift — so the
+   refit trades the step for a slope and the residual rises slowly through
+   the pre-period instead of jumping at $T_0$. Cyclic shifts of such a
+   residual produce many blocks with sums comparable to the post block.
+   The richer the donor pool, the more of this the simplex allows.
+3. **Ridge augmentation.** `AugSynth`'s null refit solves the ridge step on
+   all $T$ rows with $J$ donors as regressors. With $J$ on the order of $T$
+   it interpolates the $h_0$-adjusted series, step included, and the
+   residual vector is solver noise at every $h_0$ — the limiting case
+   derived in §5.9 (I-5), where the absorbed-null guard fires.
+
+Channel 1 is the subject of §5.6 and is bounded by $T_1/T$. Channels 2 and 3
+are not bounded by the design ratio and are the ones that produced the
+observation below.
+
+**Observation (applied panel, 2026-10).** `Synth(fixedeff=True)`, 58 donors,
+43 pre and 13 post monthly periods, a cumulative level outcome in the
+50–100 range, raw pre-period RMSPE about 3.8. Injecting a permanent step of
+$-10, -20, \dots, -80$ outcome units into the treated post-period moved
+`placebo_in_space` from rank 52/59 to rank 1/59 ($p = 0.017$) while
+`conformal_pvalue(fit)` (block scheme) returned 0.34, 0.36, 0.45, 0.50,
+0.39, 0.23, 0.14, 0.11 for steps of 0, 10, 20, 30, 40, 52, 64, 80 — not
+monotone, and never below 0.10 for a step 20 times the pre-period RMSPE.
+`simulate_power(..., effect_type="additive", durations=13,
+lookback_window=8)` on the same grid reported power 0.0 in every cell.
+
+**Reproduction (synthetic, pinned in `known-issues.md` I-6).** One treated
+unit plus 58 donors, $T_0 = 43$, $T_1 = 13$; each unit is a level in
+$[30, 60]$ plus the cumulative sum of a unit-specific drift in $[0.3, 1.2]$
+and $N(0, 1)$ increments; the treated unit is a Dirichlet convex combination
+of five donors plus its own random walk (sd 0.5), so it sits inside the
+donor hull and the pre-period fit is tight (raw RMSPE 0.62). A step $-\delta$
+is subtracted from the treated post-period. Seed 0:
+
+| $\delta$ | pre RMSPE | `att_` | block $p$ | rank of post block (of 56) | placebo $p$ (§7.1) | share of `att_` the null refit explains |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0  | 0.62 | 0.8   | 0.732 | 41 | 0.576 | — |
+| 10 | 0.62 | −9.2  | 0.214 | 12 | 0.017 | 0.84 |
+| 20 | 0.62 | −19.2 | 0.214 | 12 | 0.017 | 0.72 |
+| 30 | 0.62 | −29.2 | 0.214 | 12 | 0.017 | 0.66 |
+| 40 | 0.62 | −39.2 | 0.125 | 7  | 0.017 | 0.57 |
+| 52 | 0.62 | −51.2 | 0.018 | 1  | 0.017 | 0.49 |
+| 80 | 0.62 | −79.2 | 0.018 | 1  | 0.017 | 0.40 |
+
+The placebo test rejects from $\delta = 10$ (16 pre-RMSPEs); the conformal
+test needs $\delta \approx 50$ (80 pre-RMSPEs). The last column is
+$1 - \overline{\hat u}_{\text{post}} / \texttt{att\_}$ with $\hat u$ the
+`conformal_null_residuals(0.0)` vector: the fraction of the estimated gap
+that the null refit has already explained before the statistic sees it.
+
+**Decomposition.** Holding the pre-period weights fixed and only moving the
+offsets to full-window means (channel 1 alone) explains 0.21–0.27 of the
+step on this panel, against $T_1/T = 0.232$. Letting the weights move
+(the actual refit) explains 0.78, 0.69 and 0.56 at $\delta = 10, 20, 40$
+(seeds 1 and 2: 0.82/0.68/0.61 and 0.88/0.73/0.51). The weight vector moves
+to a different active set — $\lVert w_{\text{null}} - w_{\text{pre}} \rVert_1
+= 2.0$, the maximum — and the pre-period residual mean grows with $\delta$
+(0.4, 1.7, 5.1, 14.4 at $\delta = 10, 20, 40, 80$): the refit is paying for
+the post-period fit with pre-period misfit, which is exactly what the
+cyclic-shift reference distribution then normalises against.
+
+**Non-monotonicity is the $p(h_0)$ curve.** Subtracting $\delta$ from the
+treated post-period and testing $h_0 = 0$ hands `conformal_null_residuals`
+the same adjusted matrix as the unshifted panel at $h_0 = \delta$, so
+
+$$
+p\bigl(\text{panel} - \delta \cdot \mathbf{1}_{\text{post}},\; h_0 = 0\bigr)
+\;=\; p\bigl(\text{panel},\; h_0 = \delta\bigr)
+$$
+
+bit for bit (pinned by `test_injected_step_equals_h0_shift_of_unshifted_panel`
+in `tests/unit/test_inference_pvalue.py`). A sweep of injected effects is
+therefore the test-inversion curve of §5.5, and inherits its non-monotonicity:
+the refit changes its active set at discrete $\delta$, and each change
+re-arranges the whole residual vector. On the synthetic panel the post-block
+rank runs 41, 44, 13 at $\delta = 0, 2, 4$ (seed 0) and 9, 1, 3, 13, 15 at
+$\delta = 0, 2, 4, 6, 8$ (seed 3) — a 2-unit step rejects at 5% and a 10-unit
+step on the same panel returns $p = 0.27$. The applied run's 0.36 → 0.50 →
+0.39 is the same shape. R `augsynth` computes the identical curve: §5.4 pins
+$p(h_0)$ to one ulp over an 89-point sweep on the Basque panel. This is a
+property of the method, not of this implementation.
+
+**Moderators.**
+
+- *Donor-pool size.* Same generator, donors subsampled, $\delta = 20$: with
+  $J \le 10$ (seed 0) or $J \le 30$ (seed 1) the null refit explains 0.53–0.59
+  of the step and the test rejects ($p = 0.018$); from $J = 20$ (seed 0) or
+  $J = 40$ (seed 1) the share rises to about 0.7 and $p$ jumps to 0.20–0.23.
+  The threshold is panel-specific; the direction is not.
+- *Outcome type.* A stationary panel (level plus AR(1) noise, same 58
+  donors, pre RMSPE 0.9) rejects at $\delta = 5$ ($p = 0.036$ / 0.018 on two
+  seeds) and at every larger $\delta$. The refit still explains about half of
+  the step through channel 1 plus re-weighting, but no donor combination
+  produces a *sustained* level change, so the remainder stays concentrated
+  in the post block. Cumulative and trending outcomes are the exposed case.
+- *Augmentation.* `AugSynth()` (CV picks $\lambda = 0.0076$ with $J = 58 >
+  T = 56$) returns $p = 0.71, 1.00, 0.93, 0.82, 0.79$ at $\delta = 0, 10, 20,
+  40, 80$. The null refit explains 102–115% of `att_` and its residual RMS is
+  0.01–0.06 in both blocks: the ridge step interpolates the shifted series.
+  On a panel with more donors than periods the augmented conformal test has
+  no power at any effect size.
+- *`fixedeff=False`* removes channel 1 only. On seed 0 it leaves $p = 0.214$
+  at $\delta = 10$–$20$; on seed 1 it rejects from $\delta = 20$. Not a
+  remedy, as §5.6 already notes.
+- *Window length.* The one lever that moves all channels at once. On the
+  same 56-period panel, placing the treatment later so that $T_1 = 8$
+  ($T_0 = 48$) or $T_1 = 4$ ($T_0 = 52$) lowers the explained share at
+  $\delta = 10$ from 0.73–0.84 to 0.63–0.73 and 0.51–0.59, and the test
+  rejects from $\delta = 20$ at $T_1 = 8$ and from $\delta = 10$ at
+  $T_1 = 4$ on all three seeds (at $T_1 = 13$ it needs $\delta \approx 40$–50).
+  Fewer misspecified rows have less pull on a full-window fit: this is CWZ's
+  asymptotic regime ($T_1$ fixed, $T_0 \to \infty$) in miniature.
+
+**Consequences for power analysis (§6).** `simulate_power` on the synthetic
+panel (additive, duration 13, eight windows, $\alpha = 0.10$) reports power
+0.0 for $|\delta| \le 30$, 0.625 at 40 and 1.0 from 52 — in units of a 0.62
+pre-RMSPE. A power curve that stays at zero across a grid the placebo test
+rejects throughout is measuring the detection test, not the design.
+Before concluding an MDE from such a curve, compute the share above on the
+largest injected effect; a share near or above one says the refit is
+explaining the effect away.
+
+**What to do with a panel like this.**
+
+- Report `placebo_in_space` (§7.1) alongside the conformal p-value. It uses
+  the pre-period weights with no refit, so none of the three channels apply;
+  its own limits are the donor count (the $1/(J+1)$ floor) and the
+  pre-period-fit discard rule.
+- Prefer `Synth` over `AugSynth` for inference when $J$ approaches $T$; the
+  ridge step has nothing to regularise against on the full window.
+- Trim the donor pool on substantive grounds before fitting. A smaller pool
+  that still brackets the treated unit limits channel 2 directly.
+- Keep the evaluation window short relative to the pre-period. The
+  §5.6 advice holds here for a second reason: the fewer post rows the refit
+  has to fit, the less of the effect it can explain away.
+- Treat a non-monotone $p(\delta)$ as expected rather than as evidence of a
+  numerical fault; it is the §5.5 curve read along a different axis.
+
+**Not a defect.** Every construction here is CWZ 2021 §3 as written and as
+R `augsynth` implements it — the fixed effect under the null is estimated on
+all $T$ periods (an intercept fitted with the model, which is what "estimate
+the counterfactual on the full adjusted window" means), and the statistic is
+the sum of $|\hat u_t|$ over the post block compared across all $T$ cyclic
+shifts — and `tests/validation_against_r/test_conformal.py` pins it to R
+with `fixedeff=TRUE` on `GeoLift_PreTest` and `fixedeff=FALSE` on the Basque
+panel. CWZ's power result is asymptotic in $T_0$ with $T_1$ fixed and rests
+on the misspecified post rows having a vanishing influence on the refit;
+nothing in it covers a donor pool as rich as the window.
+
+**Diagnostic (2026-10-20).** `conformal_test` reports the share above as
+`ConformalTestResult.absorbed_share` — in general
+$1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$, `nan` at
+$h_0 = \texttt{att\_}$ — and emits a `UserWarning` once it reaches 0.75
+while $|\texttt{att\_} - h_0|$ exceeds the point fit's pre-period RMSPE
+(a gap inside the pre-period noise has nothing to absorb and makes the
+share a ratio of two small numbers). The 0.75 threshold is a heuristic read
+off the panels above: rejection of clear effects stops at shares around 0.7,
+while the fixed-effect share alone stays at $T_1/T < 0.5$ whenever the post
+window is shorter than the pre-period. It is skipped when the absorbed-null
+guard of §5.9 has already fired on the same call, interpolation being the
+limiting case of the same mechanism. `conformal_pvalue` stays silent on it
+by design — it is the per-refit primitive of `conformal_interval` (one call
+per grid point) and `simulate_power` (one per simulation), where a per-call
+warning would repeat once per refit. Remaining items are tracked as
+[`known-issues.md`](known-issues.md) I-6.
 
 ## 6. Power analysis (simulation-based, GeoLift-style)
 
@@ -897,6 +1096,13 @@ $h_0 = 0$ are the same event. R `augsynth`'s interval inversion implies the
 strict $p < \alpha$ rejection instead (§5.3, deliberate divergence, issue
 #29); `GeoLiftPower`'s own rule at a tie is still untested — the parity test
 pins the harness at a tie-free $\alpha$ so it holds under either convention.
+
+**A flat-zero power curve can be the test, not the design.** The detection
+test refits under the null, and on trending outcomes with a rich donor pool
+that refit can explain most of an injected effect away (§5.10): power stays
+at zero across effects an in-space placebo rejects throughout. Run
+`conformal_test` on the largest injected effect and read `absorbed_share`
+(§5.10) before reading an MDE off such a curve.
 
 ### 6.3 GeoLiftPower correspondence
 
