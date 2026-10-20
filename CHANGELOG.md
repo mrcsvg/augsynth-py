@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-20
+
+A diagnostics release for conformal inference: two guards against the CWZ
+refit absorbing the effect it is meant to test (the interpolating-ridge
+regime, I-5, and the absorbed-share diagnostic, I-6), both documented in
+`docs/known-issues.md` and `docs/methodology.md` §5.9–5.10. No estimate,
+p-value or tolerance changes. The one API change is a new field on the
+frozen `ConformalTestResult` dataclass, which breaks hand-construction of
+that result (hence a minor bump under the 0.x caveat). The R parity suite
+drops its `pandas`/`pyarrow` dependency, and two exploratory case-study
+notebooks are removed.
+
 ### Added
 
 - A `UserWarning` from `conformal_pvalue` / `conformal_test` (and therefore
@@ -48,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being the per-refit primitive of `conformal_interval` and
   `simulate_power`. The field is appended to the frozen dataclass; code
   constructing `ConformalTestResult` by hand must now pass it.
+
 ### Changed
 
 - The R parity suite converts R data.frames to Polars directly
@@ -426,7 +439,8 @@ v0.1 (classical SCM) and v0.2 (ridge ASCM) design milestones.
   including exact p-value-curve parity on the Basque panel.
 - PEP 561 `py.typed` marker; `mypy --strict` clean on `src/`.
 
-[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mrcsvg/augsynth-py/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.7.0
 [0.6.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.6.0
 [0.5.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mrcsvg/augsynth-py/releases/tag/v0.4.0
