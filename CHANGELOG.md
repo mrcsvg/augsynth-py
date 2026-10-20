@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `p(panel - delta on post, h0=0) == p(panel, h0=delta)` that makes a
   non-monotone p-value in the injected effect the already-known §5.5
   curve. Two unit tests pin the identity and the absorbed share.
+- `ConformalTestResult.absorbed_share`: the share of the gap under test,
+  `att_ - h0`, that the refit under the null explained away before the
+  statistic read the residuals (`1 - mean(post residuals) / (att_ - h0)`,
+  `nan` at `h0 == att_`). `conformal_test` now emits a `UserWarning` once
+  it reaches 0.75 while the gap exceeds the point fit's pre-period RMSPE —
+  the regime of §5.9 in which a large p-value is weak evidence against the
+  tested effect. `conformal_pvalue` is unchanged and stays silent on it,
+  being the per-refit primitive of `conformal_interval` and
+  `simulate_power`. The field is appended to the frozen dataclass; code
+  constructing `ConformalTestResult` by hand must now pass it.
 
 ### Changed
 

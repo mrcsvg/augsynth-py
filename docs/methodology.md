@@ -703,7 +703,14 @@ p-value for the same arguments and `rng` state) and returns a
 - `observed_included` — which p-value convention applies, so `pvalue` is
   recomputable from the exposed pieces:
   $p = \#\{S_j \ge S_\text{obs}\}/n$ when the identity is a member (cyclic
-  shifts), $p = (1 + \#\{S \ge S_\text{obs}\})/(1 + n)$ otherwise.
+  shifts), $p = (1 + \#\{S \ge S_\text{obs}\})/(1 + n)$ otherwise;
+- `absorbed_share` — the share of the gap under test, `att_ - h0`, that
+  the null refit explained away before the statistic read the residuals
+  (§5.9): $1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$,
+  `nan` at `h0 == att_`. `conformal_test` warns once it reaches 0.75 while
+  the gap exceeds the point fit's pre-period RMSPE; `conformal_pvalue`
+  stays silent on it, being the per-refit primitive of `conformal_interval`
+  and `simulate_power`.
 
 The motivating use is graphical: plot a histogram of `null_distribution` with
 a vertical line at `statistic` to *show* that the observed post-treatment
@@ -904,9 +911,22 @@ shifts — and `tests/validation_against_r/test_conformal.py` pins it to R
 with `fixedeff=TRUE` on `GeoLift_PreTest` and `fixedeff=FALSE` on the Basque
 panel. CWZ's power result is asymptotic in $T_0$ with $T_1$ fixed and rests
 on the misspecified post rows having a vanishing influence on the refit;
-nothing in it covers a donor pool as rich as the window. Tracked as
-[`known-issues.md`](known-issues.md) I-5 for the diagnostic that would make
-the absorbed share visible at test time.
+nothing in it covers a donor pool as rich as the window.
+
+**Diagnostic (2026-10-20).** `conformal_test` reports the share above as
+`ConformalTestResult.absorbed_share` — in general
+$1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$, `nan` at
+$h_0 = \texttt{att\_}$ — and emits a `UserWarning` once it reaches 0.75
+while $|\texttt{att\_} - h_0|$ exceeds the point fit's pre-period RMSPE
+(a gap inside the pre-period noise has nothing to absorb and makes the
+share a ratio of two small numbers). The 0.75 threshold is a heuristic read
+off the panels above: rejection of clear effects stops at shares around 0.7,
+while the fixed-effect share alone stays at $T_1/T < 0.5$ whenever the post
+window is shorter than the pre-period. `conformal_pvalue` stays silent by
+design — it is the per-refit primitive of `conformal_interval` (one call
+per grid point) and `simulate_power` (one per simulation), where a per-call
+warning would repeat once per refit. Remaining items are tracked as
+[`known-issues.md`](known-issues.md) I-5.
 
 ## 6. Power analysis (simulation-based, GeoLift-style)
 
@@ -975,9 +995,9 @@ pins the harness at a tie-free $\alpha$ so it holds under either convention.
 **A flat-zero power curve can be the test, not the design.** The detection
 test refits under the null, and on trending outcomes with a rich donor pool
 that refit can explain most of an injected effect away (§5.9): power stays
-at zero across effects an in-space placebo rejects throughout. Check the
-absorbed share of §5.9 on the largest injected effect before reading an MDE
-off such a curve.
+at zero across effects an in-space placebo rejects throughout. Run
+`conformal_test` on the largest injected effect and read `absorbed_share`
+(§5.9) before reading an MDE off such a curve.
 
 ### 6.3 GeoLiftPower correspondence
 

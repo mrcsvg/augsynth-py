@@ -172,8 +172,9 @@ harness knows why.
 
 ## I-5 — The conformal null refit absorbs the effect under test; no power on rich donor pools with trending outcomes
 
-**Status:** open, behaviour confirmed faithful to CWZ 2021 and R `augsynth`;
-what is missing is a diagnostic. Opened 2026-10-20.
+**Status:** open, behaviour confirmed faithful to CWZ 2021 and R `augsynth`.
+Opened 2026-10-20; the test-time diagnostic (item 1 below) landed the same
+day, items 2 and 3 remain.
 **Module:** [`src/augsynth_py/inference.py`](../src/augsynth_py/inference.py)
 — `conformal_pvalue` / `conformal_test`, via `conformal_null_residuals` on
 `Synth` and `AugSynth`; surfaces through
@@ -264,18 +265,17 @@ rejects from δ = 5.
 reads an MDE that does not exist — the curve is flat at zero because the
 detection test cannot see the effect, not because the design is weak — and
 a user who compares the conformal p-value with the placebo rank concludes
-one of the two is broken. Neither the warning of §5.6 (which needs
-$T_1 \ge T_0$) nor anything else in the API currently signals the regime.
+one of the two is broken. The warning of §5.6 needs $T_1 \ge T_0$ and does
+not cover it; `conformal_test` now does (item 1), `conformal_pvalue` and
+`simulate_power` do not.
 
 **What would close it.**
 
-1. Expose the absorbed share at test time: `ConformalTestResult` already
-   holds `residuals` and `post_mask`, so
-   $1 - \overline{\hat u}_{\text{post}} / \texttt{att\_}$ (for $h_0 = 0$;
-   in general $1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$)
-   is one field away, and a `UserWarning` past a threshold (say 0.75) would
-   mirror `_warn_if_post_dominated`. Public-API addition — needs maintainer
-   sign-off per `CLAUDE.md`.
+1. *Done 2026-10-20 (maintainer-approved).* `ConformalTestResult.absorbed_share`
+   $= 1 - \overline{\hat u}_{\text{post}} / (\texttt{att\_} - h_0)$, and
+   `conformal_test` emits a `UserWarning` once it reaches 0.75 while the gap
+   exceeds the point fit's pre-period RMSPE (`methodology.md` §5.9,
+   `_warn_if_effect_absorbed`). `conformal_pvalue` is deliberately silent.
 2. Confirm the moderators against R `augsynth` on a trending panel via the
    `workflow_dispatch` parity job (not the stationary `GeoLift_PreTest`
    fixture, which cannot show the effect), so the "faithful" claim rests on

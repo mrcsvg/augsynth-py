@@ -7,6 +7,8 @@ estimator's ``conformal_null_residuals(h0)`` adjusts the treated post-period by
 resulting exchangeable residuals are handed to the permutation core.
 """
 
+import warnings
+
 import numpy as np
 import polars as pl
 import pytest
@@ -188,8 +190,12 @@ def test_injected_step_equals_h0_shift_of_unshifted_panel(delta):
     base = Synth(fixedeff=True).fit(panel, **kw)
     shifted = Synth(fixedeff=True).fit(_subtract_step(panel, delta, t0), **kw)
 
-    via_injection = conformal_test(shifted, 0.0)
-    via_h0 = conformal_test(base, delta)
+    # Both calls sit in the absorbed-share regime this panel was built for;
+    # the warning is covered by its own test below, not by this identity.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="conformal_test: the refit under H0")
+        via_injection = conformal_test(shifted, 0.0)
+        via_h0 = conformal_test(base, delta)
 
     assert np.array_equal(via_injection.residuals, via_h0.residuals)
     assert via_injection.pvalue == via_h0.pvalue
@@ -217,10 +223,63 @@ def test_null_refit_explains_most_of_an_injected_step_on_a_cumulative_panel():
     assert delta > 10 * pre_rmspe  # the step is unmistakable on the pre-fit scale
     assert fit.att_ < -delta / 2  # and the point estimate sees it
 
-    res = conformal_test(fit, 0.0)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="conformal_test: the refit under H0")
+        res = conformal_test(fit, 0.0)
     absorbed = 1.0 - float(res.residuals[post].mean()) / fit.att_
     fixed_effect_share = post.sum() / post.shape[0]
     assert absorbed > 0.5
     assert absorbed > fixed_effect_share + 0.2
     # ... and the test does not reject at 10% despite a step > 10 pre-RMSPEs.
     assert res.pvalue > 0.1
+
+
+def test_absorbed_share_is_the_documented_ratio_and_warns_on_the_cumulative_panel():
+    # The field is 1 - mean(post residuals) / (att_ - h0) (methodology §5.9);
+    # on this panel the refit explains ~0.89 of a 5-unit step, past the 0.75
+    # warning threshold, and the step dwarfs the pre-period RMSPE, so
+    # conformal_test warns.
+    panel, t0 = _cumulative_panel()
+    fit = Synth(fixedeff=True).fit(
+        _subtract_step(panel, 5.0, t0),
+        unit="unit",
+        time="time",
+        outcome="y",
+        treated="u00",
+        treatment_time=t0,
+    )
+    with pytest.warns(UserWarning, match=r"explains \d+% of the post-period gap") as record:
+        res = conformal_test(fit, 0.0)
+    assert len(record) == 1
+    post = ~fit.pre_mask_
+    manual = 1.0 - float(res.residuals[post].mean()) / fit.att_
+    assert res.absorbed_share == pytest.approx(manual)
+    assert res.absorbed_share > 0.75
+    # conformal_pvalue is the per-refit primitive and stays silent by design
+    # (filterwarnings=error would turn a stray warning into a failure here).
+    assert conformal_pvalue(fit, 0.0) == res.pvalue
+
+
+def test_absorbed_share_does_not_warn_at_a_well_specified_null():
+    # At h0 == att_ there is no gap to absorb: the share is nan and no warning
+    # is emitted (filterwarnings=error makes a stray one fail the test).
+    panel, t0 = _cumulative_panel()
+    fit = Synth(fixedeff=True).fit(
+        panel, unit="unit", time="time", outcome="y", treated="u00", treatment_time=t0
+    )
+    res = conformal_test(fit, fit.att_)
+    assert np.isnan(res.absorbed_share)
+
+
+def test_absorbed_share_gate_ignores_gaps_inside_the_pre_period_noise():
+    # A gap no larger than the pre-period RMSPE makes the share a ratio of two
+    # small numbers; the gate suppresses the warning there whatever the share
+    # is (filterwarnings=error turns a stray warning into a failure).
+    panel, t0 = _cumulative_panel()
+    fit = Synth(fixedeff=True).fit(
+        panel, unit="unit", time="time", outcome="y", treated="u00", treatment_time=t0
+    )
+    pre_rmspe = float(np.sqrt(np.mean(fit.gap_[fit.pre_mask_] ** 2)))
+    assert pre_rmspe > 0
+    res = conformal_test(fit, fit.att_ - 0.5 * pre_rmspe)
+    assert np.isfinite(res.absorbed_share)

@@ -50,8 +50,10 @@ class _FittedSC(Protocol):
     ----------
     gap_ : NDArray[np.float64]
         Actual minus synthetic outcome over *all* periods, ordered by period.
-        Used only to *place* the confidence-interval grid
-        (:func:`conformal_interval`); the p-value itself does not read it.
+        Used to *place* the confidence-interval grid
+        (:func:`conformal_interval`) and, through its pre-period RMSPE, to
+        scale the absorbed-share diagnostic of :func:`conformal_test`; the
+        p-value itself does not read it.
     pre_mask_ : NDArray[np.bool_]
         Boolean mask, same length as ``gap_``, True for pre-treatment periods
         (post-treatment periods are ``~pre_mask_``).
@@ -176,6 +178,84 @@ def _warn_if_post_dominated(fit: _FittedSC, post_mask: NDArray[np.bool_]) -> Non
         "fixedeff=False removes this specific mechanism but need not restore "
         "power, since it also drops the re-centring the pre-period fit relies "
         "on. Placebo-in-space inference uses no refit and is unaffected.",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+#: Share of the gap under test that the null refit must have explained away
+#: before :func:`conformal_test` warns. A heuristic: on the panels of
+#: ``docs/methodology.md`` §5.9 the test stops rejecting clear effects once the
+#: share passes roughly 0.7, while the fixed-effect share alone (§5.6) stays at
+#: ``T1 / T``, i.e. below 0.5 whenever the post window is shorter than the
+#: pre-period.
+_ABSORBED_SHARE_WARN: float = 0.75
+
+
+def _absorbed_share(
+    fit: _FittedSC,
+    residuals: NDArray[np.float64],
+    post_mask: NDArray[np.bool_],
+    h0: float,
+) -> float:
+    r"""Share of the post-period gap under test that the null refit explained.
+
+    The point fit sees a mean post-period gap ``att_``; against the null
+    ``h0`` the gap it is asked to explain is ``att_ - h0``. Had the refit of
+    ``conformal_null_residuals`` kept the pre-period weights and offsets, the
+    mean post residual would equal that gap; whatever is missing from it is
+    what the full-window refit absorbed (fixed-effect re-centring, simplex
+    re-weighting, ridge interpolation — ``docs/methodology.md`` §5.9):
+
+    .. math::
+
+        \text{share} \;=\; 1 \;-\;
+        \frac{\overline{\hat u}_{\text{post}}}{\texttt{att\_} - h_0}.
+
+    ``0`` means the statistic sees the whole gap, ``1`` that it sees none of
+    it, values above ``1`` that the refit overshot. ``nan`` when
+    ``att_ == h0`` (nothing to absorb).
+    """
+    effect = float(fit.att_) - float(h0)
+    if effect == 0.0:
+        return float("nan")
+    return 1.0 - float(np.mean(residuals[post_mask])) / effect
+
+
+def _warn_if_effect_absorbed(
+    fit: _FittedSC,
+    share: float,
+    post_mask: NDArray[np.bool_],
+    h0: float,
+) -> None:
+    """Warn when the null refit has explained most of the gap it is testing.
+
+    Fires when ``share`` reaches :data:`_ABSORBED_SHARE_WARN` *and* the gap
+    under test ``att_ - h0`` exceeds the pre-period RMSPE of the point fit —
+    a gap inside the pre-period noise has nothing for the refit to absorb and
+    makes the share a ratio of two small numbers. In that regime a large
+    p-value is weak evidence against an effect of the tested size: the
+    statistic is read on residuals from which the effect has already been
+    removed (``docs/methodology.md`` §5.9, ``known-issues.md`` I-5).
+    """
+    if not np.isfinite(share) or share < _ABSORBED_SHARE_WARN:
+        return
+    effect = float(fit.att_) - float(h0)
+    pre_gap = np.asarray(fit.gap_, dtype=np.float64)[~post_mask]
+    scale = float(np.sqrt(np.mean(pre_gap**2)))
+    if abs(effect) <= scale:
+        return
+    warnings.warn(
+        f"conformal_test: the refit under H0 (h0={h0:g}) explains {share:.0%} of the "
+        f"post-period gap it is testing (att_ - h0 = {effect:.3g}; pre-period RMSPE "
+        f"{scale:.3g}). The statistic is read on the remainder only, so a large "
+        "p-value here is weak evidence against an effect of this size. The "
+        "full-window refit followed the shifted treated series — through the "
+        "fixed-effect re-centring (share T1/T), simplex re-weighting on a rich donor "
+        "pool (cheap on trending outcomes), or ridge interpolation when the donor "
+        "count approaches the period count. Compare with placebo_in_space, trim the "
+        "donor pool, prefer Synth over AugSynth for inference, or shorten the "
+        "evaluation window; see docs/methodology.md §5.9.",
         UserWarning,
         stacklevel=3,
     )
@@ -388,6 +468,18 @@ class ConformalTestResult:
     block_size : int or None
         Block length of the random-block scheme, or ``None`` for the
         deterministic cyclic-shift scheme / iid permutations.
+    absorbed_share : float
+        Share of the post-period gap under test, ``att_ - h0``, that the
+        refit under the null explained away before the statistic read the
+        residuals: ``1 - mean(residuals[post_mask]) / (att_ - h0)``. ``0``
+        means the statistic sees the whole gap; ``1`` that the refit
+        reproduced the ``h0``-adjusted treated series over the post period
+        and the statistic sees none of it; above ``1`` that it overshot
+        (ridge interpolation). ``nan`` when ``att_ == h0``.
+        :func:`conformal_test` emits a ``UserWarning`` once this reaches
+        0.75 and the gap exceeds the point fit's pre-period RMSPE — the
+        regime in which the test loses power against the very effect it is
+        testing (``docs/methodology.md`` §5.9).
     """
 
     pvalue: float
@@ -400,6 +492,7 @@ class ConformalTestResult:
     side: Side
     permutation_type: PermutationType
     block_size: int | None
+    absorbed_share: float
 
 
 def conformal_test(
@@ -453,7 +546,20 @@ def conformal_test(
     -------
     ConformalTestResult
         The p-value together with the observed statistic, the permutation
-        reference distribution, the null residuals, and the test metadata.
+        reference distribution, the null residuals, the test metadata, and
+        the absorbed share.
+
+    Warns
+    -----
+    UserWarning
+        When the refit under the null has explained at least 75% of the gap
+        under test while that gap exceeds the pre-period RMSPE (the
+        ``absorbed_share`` diagnostic; see the result's attribute docs and
+        ``docs/methodology.md`` §5.9), and on a post-dominated window with
+        ``fixedeff=True`` (§5.6). :func:`conformal_pvalue` emits only the
+        latter: it is the per-grid-point / per-simulation primitive of
+        :func:`conformal_interval` and :func:`~augsynth_py.power.simulate_power`,
+        where a per-call diagnostic would repeat once per refit.
 
     References
     ----------
@@ -467,6 +573,8 @@ def conformal_test(
         residuals, post_mask, side, permutation_type, block_size, ns, rng
     )
     _warn_if_post_dominated(fit, post_mask)
+    absorbed_share = _absorbed_share(fit, residuals, post_mask, h0)
+    _warn_if_effect_absorbed(fit, absorbed_share, post_mask, h0)
     return ConformalTestResult(
         pvalue=_pvalue_from_distribution(statistic, null_distribution, observed_included),
         statistic=statistic,
@@ -478,6 +586,7 @@ def conformal_test(
         side=side,
         permutation_type=permutation_type,
         block_size=block_size,
+        absorbed_share=absorbed_share,
     )
 
 
@@ -580,10 +689,12 @@ def conformal_pvalue(
     removes part of the effect from the post residuals before the statistic
     reads them, so the test can fail to reject effects an in-space placebo
     (:func:`~augsynth_py.robustness.placebo_in_space`) ranks first, and
-    ``p`` need not fall monotonically as the true effect grows. The share
-    of ``att_`` the refit explained is
-    ``1 - mean(residuals[post]) / att_`` on a :func:`conformal_test`
-    result; see ``docs/methodology.md`` §5.9.
+    ``p`` need not fall monotonically as the true effect grows.
+    :func:`conformal_test` reports the share of the gap the refit explained
+    as ``absorbed_share`` and warns past 0.75; this function stays silent
+    on it by design (it is the per-refit primitive of
+    :func:`conformal_interval` and :func:`~augsynth_py.power.simulate_power`).
+    See ``docs/methodology.md`` §5.9.
 
     The planned sibling ``geoexp`` package will map its public arguments onto
     this function: ``conformal_type`` -> ``permutation_type`` and
